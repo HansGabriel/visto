@@ -89,13 +89,22 @@ export async function uploadScreenshot(
 export async function uploadVideo(
   desktopId: string,
   videoBlob: Blob,
-  duration: number
+  duration: number,
+  query?: string,
+  mimeType?: string
 ): Promise<UploadResponse> {
   const formData = new FormData()
-  // IMPORTANT: Add duration BEFORE the file so server can read it with request.file()
+  // IMPORTANT: Add fields BEFORE the file so server can read them with request.file()
   formData.append('duration', duration.toString())
-  // Add file AFTER duration field
-  formData.append('video', videoBlob, 'recording.webm')
+  if (query?.trim()) {
+    formData.append('query', query.trim())
+  }
+  if (mimeType) {
+    formData.append('mimeType', mimeType)
+  }
+  // Add file AFTER fields - use correct extension based on MIME type
+  const extension = mimeType?.includes('webm') ? 'webm' : 'mp4'
+  formData.append('video', videoBlob, `recording.${extension}`)
 
   const response = await fetch(API_ENDPOINTS.DESKTOP_VIDEO(desktopId), {
     method: 'POST',

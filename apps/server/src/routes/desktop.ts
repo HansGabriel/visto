@@ -24,28 +24,33 @@ function generateDesktopId(): string {
   return `desktop_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 }
 
-// Extract query from multipart fields
-function extractQueryFromFields(fields: unknown): string | null {
+// Extract string field from multipart fields
+function extractStringField(fields: unknown, fieldName: string): string | null {
   if (!fields || typeof fields !== 'object') return null;
   
-  const queryField = (fields as Record<string, unknown>).query;
-  if (!queryField) return null;
+  const field = (fields as Record<string, unknown>)[fieldName];
+  if (!field) return null;
   
   // Handle array or single value
-  const value = Array.isArray(queryField)
-    ? queryField[0]
-    : queryField;
+  const value = Array.isArray(field)
+    ? field[0]
+    : field;
   
   // Extract value from object or use directly
-  const queryValue = value && typeof value === 'object' && 'value' in value
+  const fieldValue = value && typeof value === 'object' && 'value' in value
     ? (value as { value: unknown }).value
     : value;
   
-  if (typeof queryValue === 'string' && queryValue.trim()) {
-    return queryValue.trim();
+  if (typeof fieldValue === 'string' && fieldValue.trim()) {
+    return fieldValue.trim();
   }
   
   return null;
+}
+
+// Extract query from multipart fields
+function extractQueryFromFields(fields: unknown): string | null {
+  return extractStringField(fields, 'query');
 }
 
 // Extract numeric field from multipart fields
@@ -207,7 +212,7 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
         }
 
         return {
-          screenshotUrl: `data:image/png;base64,${base64.substring(0, 50)}...`,
+          screenshotUrl: `data:image/png;base64,${base64}`,
           status: "uploaded",
           analysis: aiResponse,
         };
@@ -239,24 +244,74 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
           return reply.code(400).send({ error: "No file uploaded" });
         }
 
-        // Extract duration from multipart fields (fields that came before the file)
+        // Extract duration, query, and MIME type from multipart fields
         const duration = extractNumericField(data.fields, 'duration') || 0;
+        const userQueryRaw = extractQueryFromFields(data.fields);
+        
+        // Enhanced default prompt for comprehensive video analysis
+        const defaultVideoPrompt = `Analyze this video thoroughly. Examine all frames from start to finish, paying special attention to:
+- The complete final state shown at the end of the video
+- All visible content, text, numbers, and details throughout the entire video
+- Any changes or progression that occurs over time
+- Everything that appears in later frames, not just the beginning
+
+Provide a detailed analysis of what happens in this video, ensuring you capture all visible information, especially content that appears in the final frames.`;
+        
+        const userQuery = userQueryRaw || defaultVideoPrompt;
+        
+        // Extract MIME type from fields or infer from filename/mimetype
+        let videoMimeType = extractStringField(data.fields, 'mimeType');
+        if (!videoMimeType) {
+          // Infer from filename or use provided mimetype
+          videoMimeType = data.filename?.endsWith('.webm') 
+            ? 'video/webm' 
+            : data.filename?.endsWith('.mp4')
+            ? 'video/mp4'
+            : data.mimetype || 'video/webm';
+        }
 
         const buffer = await data.toBuffer();
         const fileSizeMB = Math.round((buffer.length / (1024 * 1024)) * 100) / 100;
+        
+        // Validate buffer is not empty
+        if (buffer.length === 0) {
+          fastify.log.error({ desktopId }, "Video buffer is empty");
+          return reply.code(400).send({ error: "Video file is empty" });
+        }
+        
+        // Validate minimum size (at least 1KB for a valid video)
+        if (buffer.length < 1024) {
+          fastify.log.warn({ desktopId, bufferSize: buffer.length }, "Video buffer is suspiciously small");
+        }
+        
         const base64 = buffer.toString("base64");
         
         fastify.log.info({ 
           desktopId, 
           fileSizeMB, 
+          bufferSize: buffer.length,
           duration, 
-          filename: data.filename 
+          filename: data.filename,
+          mimeType: videoMimeType,
+          queryLength: userQuery.length,
+          base64Length: base64.length
         }, "🎥 Video processed successfully");
 
+        // Analyze video with LLM (pass MIME type)
+        let aiResponse: string | undefined;
+        try {
+          aiResponse = await analyzeWithLLM(base64, "video", userQuery, undefined, fastify.log, videoMimeType);
+          fastify.log.info({ desktopId, responseLength: aiResponse.length }, "🎥 Video analysis complete");
+        } catch (error: unknown) {
+          fastify.log.error({ desktopId, err: error }, "Failed to analyze video with LLM");
+          // Continue even if LLM fails
+        }
+
         return {
-          videoUrl: `data:video/mp4;base64,${base64.substring(0, 50)}...`,
+          videoUrl: `data:${videoMimeType};base64,${base64.substring(0, 50)}...`,
           duration,
           status: "uploaded",
+          analysis: aiResponse,
         };
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";

@@ -21,6 +21,7 @@ export interface UploadResponse {
   videoUrl?: string
   duration?: number
   analysis?: string
+  previewUrl?: string
 }
 
 export interface DesktopSession {

@@ -11,13 +11,14 @@ export async function analyzeWithLLM(
   mediaType: "image" | "video",
   userQuery: string,
   model?: string, // Optional model override
-  logger?: { info: (obj: unknown, msg: string) => void; error: (obj: unknown, msg: string) => void }
+  logger?: { info: (obj: unknown, msg: string) => void; error: (obj: unknown, msg: string) => void },
+  mimeTypeOverride?: string // Optional MIME type override (for video formats like webm)
 ): Promise<string> {
   // Use provided model or default to Flash
   const modelName = model || DEFAULT_MODEL;
   
-  // Determine MIME type based on media type
-  const mimeType = mediaType === "video" ? "video/mp4" : "image/png";
+  // Determine MIME type - use override if provided, otherwise default
+  const mimeType = mimeTypeOverride || (mediaType === "video" ? "video/webm" : "image/png");
   const mediaSizeKB = Math.round(mediaBase64.length * 0.75 / 1024); // Approximate size
 
   if (logger) {
@@ -26,8 +27,27 @@ export async function analyzeWithLLM(
 
   const startTime = Date.now();
 
+  // Validate base64 data
+  if (!mediaBase64 || mediaBase64.length === 0) {
+    throw new Error("Media base64 data is empty");
+  }
+
   try {
+    // For videos, enhance the prompt to ensure comprehensive analysis
+    let enhancedQuery = userQuery;
+    if (mediaType === "video") {
+      // Add general instructions to analyze all frames comprehensively
+      enhancedQuery = `${userQuery}
+
+IMPORTANT: When analyzing this video, ensure you:
+- Examine ALL frames from beginning to end, especially the final frame
+- Capture ALL visible content, details, text, numbers, and information
+- Do not miss or overlook content that appears in later frames
+- Analyze the complete final state shown at the end of the video`;
+    }
+    
     // Generate content with media and query using new API
+    // Note: For videos, ensure the base64 data is valid and the MIME type matches
     const response = await ai.models.generateContent({
       model: modelName,
       contents: [
@@ -37,7 +57,7 @@ export async function analyzeWithLLM(
             data: mediaBase64,
           },
         },
-        { text: userQuery },
+        { text: enhancedQuery },
       ],
     });
 
