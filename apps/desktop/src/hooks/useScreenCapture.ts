@@ -15,6 +15,12 @@ export function useScreenCapture(desktopId: string | null) {
     resolve: (result: UploadResponse) => void
     reject: (error: Error) => void
   } | null>(null)
+  const videoUploadResultRef = useRef<UploadResponse | null>(null) // Store final upload result
+  
+  // Get final upload result (with videoUrl and storageId)
+  const getVideoUploadResult = useCallback(() => {
+    return videoUploadResultRef.current
+  }, [])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -93,6 +99,10 @@ export function useScreenCapture(desktopId: string | null) {
 
     try {
       setError(null)
+      
+      // Clear previous upload result when starting a new recording
+      // This ensures we don't mix results from different recordings
+      videoUploadResultRef.current = null
       
       // Get stream ID from main process
       const { streamId } = await window.electronAPI.startRecording()
@@ -184,47 +194,45 @@ export function useScreenCapture(desktopId: string | null) {
             throw new Error('Created video blob is empty')
           }
           
-          // Test if blob is valid by creating object URL
+          // Create preview URL immediately (don't wait for upload)
           const previewUrl = URL.createObjectURL(videoBlob)
           console.log('📹 Preview URL created:', previewUrl)
-          
-          // Verify the blob can be read (basic validation)
-          try {
-            const testReader = new FileReader()
-            await new Promise<void>((resolve, reject) => {
-              testReader.onloadend = () => {
-                if (testReader.result && testReader.result instanceof ArrayBuffer) {
-                  console.log('📹 Blob validation: readable, size:', testReader.result.byteLength, 'bytes')
-                  resolve()
-                } else {
-                  reject(new Error('Blob validation failed: could not read blob data'))
-                }
-              }
-              testReader.onerror = () => reject(new Error('Blob validation failed: FileReader error'))
-              testReader.readAsArrayBuffer(videoBlob.slice(0, 1024)) // Read first 1KB to validate
-            })
-          } catch (validationError) {
-            console.error('📹 Blob validation error:', validationError)
-            throw new Error(`Video blob validation failed: ${validationError instanceof Error ? validationError.message : 'Unknown error'}`)
-          }
           
           // Calculate duration
           const duration = Math.floor((Date.now() - startTime) / 1000)
           console.log('📹 Video duration:', duration, 'seconds')
 
-          // Upload to backend with query
-          console.log('📹 Uploading video to backend...')
-          const result = await uploadVideo(desktopId, videoBlob, duration, videoQueryRef.current, blobMimeType)
-          console.log('📹 Video upload complete')
+          // Return preview immediately (before upload completes)
+          const previewResult: UploadResponse = {
+            status: 'uploading', // Upload is in progress
+            previewUrl,
+            videoUrl: '', // Will be set after upload
+            duration,
+          }
 
-          // Add preview URL to result
-          const resultWithPreview = { ...result, previewUrl }
-
-          // Resolve the promise if it exists
+          // Resolve the promise immediately with preview (don't wait for upload)
           if (videoUploadPromiseRef.current) {
-            videoUploadPromiseRef.current.resolve(resultWithPreview)
+            videoUploadPromiseRef.current.resolve(previewResult)
             videoUploadPromiseRef.current = null
           }
+
+          // Upload to backend in background (don't block)
+          uploadVideo(desktopId, videoBlob, duration, videoQueryRef.current, blobMimeType)
+            .then((result) => {
+              console.log('📹 Video upload complete')
+              // Store the full result (including videoUrl and storageId) for later use
+              videoUploadResultRef.current = { ...result, previewUrl }
+              console.log('📹 Video upload result stored:', {
+                hasVideoUrl: !!result.videoUrl,
+                hasStorageId: !!result.storageId,
+                storageId: result.storageId,
+              })
+            })
+            .catch((err) => {
+              console.error('📹 Background upload failed:', err)
+              // Don't throw - preview is already shown
+              videoUploadResultRef.current = null
+            })
 
           // Stop all tracks
           stream.getTracks().forEach((track) => track.stop())
@@ -277,6 +285,10 @@ export function useScreenCapture(desktopId: string | null) {
       throw new Error('Desktop ID not available')
     }
 
+    // Don't clear previous upload result - it may still be completing from a previous recording
+    // The background upload from the previous recording might resolve after this point
+    // We'll only clear it when starting a new recording (in startRecording)
+
     // Store query for use in onstop handler
     videoQueryRef.current = query
 
@@ -307,11 +319,16 @@ export function useScreenCapture(desktopId: string | null) {
       setIsRecording(false)
       setRecordingStartTime(null)
 
-      // Wait for the upload to complete (onstop handler will resolve/reject)
-      return await uploadPromise
+      // Wait for preview to be ready (onstop handler resolves immediately with preview)
+      const previewResult = await uploadPromise
+      
+      // Return preview immediately - upload happens in background
+      // The videoUrl will be available in videoUploadResultRef when upload completes
+      return previewResult
     } catch (err: unknown) {
       // Clean up promise ref if error occurs before onstop
       videoUploadPromiseRef.current = null
+      videoUploadResultRef.current = null
       const errorMessage = err instanceof Error ? err.message : 'Failed to stop recording'
       setError(errorMessage)
       setIsRecording(false)
@@ -334,5 +351,6 @@ export function useScreenCapture(desktopId: string | null) {
     isCapturing,
     error,
     getRecordingDuration,
+    getVideoUploadResult, // Expose function to get final upload result with videoUrl and storageId
   }
 }

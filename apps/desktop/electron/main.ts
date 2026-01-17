@@ -39,7 +39,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       contextIsolation: true, // Mandatory
-      sandbox: true, // Strongly recommended - CSP handles localhost connections
+      sandbox: false, // Strongly recommended - CSP handles localhost connections
       webSecurity: true, // Keep web security enabled
     },
   })

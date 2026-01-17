@@ -28,6 +28,38 @@ function getConvexClient(): ConvexHttpClient {
   return new ConvexHttpClient(url);
 }
 
+// Get Convex site URL for HTTP actions
+function getConvexSiteUrl(): string {
+  let url = process.env.CONVEX_URL 
+    || process.env.CONVEX_DEPLOYMENT_URL 
+    || process.env.CONVEX_DEPLOYMENT
+    || process.env.CONVEX_SITE_URL;
+    
+  if (!url) {
+    throw new Error("CONVEX_URL, CONVEX_DEPLOYMENT_URL, CONVEX_DEPLOYMENT, or CONVEX_SITE_URL must be set");
+  }
+  
+  // Convert dev:project-name format
+  if (url.startsWith("dev:")) {
+    const projectName = url.replace("dev:", "");
+    // HTTP actions are on .convex.site domain
+    return `https://${projectName}.convex.site`;
+  }
+  
+  // If it's already a .convex.cloud URL, convert to .convex.site
+  if (url.includes(".convex.cloud")) {
+    return url.replace(".convex.cloud", ".convex.site");
+  }
+  
+  // If it's already a .convex.site URL, use it
+  if (url.includes(".convex.site")) {
+    return url;
+  }
+  
+  // Fallback: assume it's a base URL and append /storeFile (but this is unlikely)
+  return url;
+}
+
 // Generate a random 6-character pairing code
 function generatePairingCode(): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -282,8 +314,52 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
           desktopId, 
           fileSizeKB, 
           filename: data.filename || 'screenshot.png', 
-          queryLength: userQuery.length 
+          queryLength: userQuery.length
         }, "📸 Screenshot processed successfully");
+        
+        // Upload to Convex file storage via HTTP action (in background, don't block response)
+        let screenshotStorageId: string | undefined;
+        const storagePromise = (async () => {
+          try {
+            const convexSiteUrl = getConvexSiteUrl();
+            const formData = new FormData();
+            
+            // Convert base64 to Buffer, then to Blob (Node.js 18+ has Blob)
+            const fileBuffer = Buffer.from(base64, "base64");
+            const fileBlob = new Blob([fileBuffer], { type: "image/png" });
+            
+            formData.append("file", fileBlob, "screenshot.png");
+            formData.append("contentType", "image/png");
+            
+            const response = await fetch(`${convexSiteUrl}/storeFile`, {
+              method: "POST",
+              body: formData,
+            });
+            
+            if (!response.ok) {
+              const errorText = await response.text().catch(() => response.statusText);
+              throw new Error(`HTTP ${response.status}: ${errorText}`);
+            }
+            
+            const result = await response.json() as { storageId: string };
+            screenshotStorageId = result.storageId;
+            fastify.log.info({ desktopId, storageId: screenshotStorageId }, "📸 Screenshot uploaded to Convex storage");
+            return result;
+          } catch (storageError: unknown) {
+            fastify.log.warn({ desktopId, err: storageError }, "⚠️ Failed to upload screenshot to Convex storage");
+            return undefined;
+          }
+        })();
+        
+        // Try to get storageId quickly (500ms timeout), but don't block
+        try {
+          await Promise.race([
+            storagePromise,
+            new Promise((resolve) => setTimeout(resolve, 500))
+          ]);
+        } catch (error) {
+          // Ignore - storage will continue in background
+        }
 
         // Mark pending request as processed FIRST (before LLM, so we don't retry on LLM failure)
         try {
@@ -389,7 +465,8 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
         }
 
         return {
-          screenshotUrl: `data:image/png;base64,${base64}`,
+          screenshotUrl: `data:image/png;base64,${base64}`, // Keep for immediate preview
+          storageId: screenshotStorageId, // May be undefined if upload not complete yet
           status: "uploaded",
           analysis: aiResponse,
         };
@@ -473,6 +550,51 @@ Provide a detailed analysis of what happens in this video, ensuring you capture 
           queryLength: userQuery.length,
           base64Length: base64.length
         }, "🎥 Video processed successfully");
+        
+        // Upload to Convex file storage via HTTP action (in background, don't block response)
+        let videoStorageId: string | undefined;
+        const videoStoragePromise = (async () => {
+          try {
+            const convexSiteUrl = getConvexSiteUrl();
+            const formData = new FormData();
+            
+            // Convert base64 to Buffer, then to Blob (Node.js 18+ has Blob)
+            const fileBuffer = Buffer.from(base64, "base64");
+            const extension = videoMimeType.includes("webm") ? "webm" : "mp4";
+            const fileBlob = new Blob([fileBuffer], { type: videoMimeType });
+            
+            formData.append("file", fileBlob, `video.${extension}`);
+            formData.append("contentType", videoMimeType);
+            
+            const response = await fetch(`${convexSiteUrl}/storeFile`, {
+              method: "POST",
+              body: formData,
+            });
+            
+            if (!response.ok) {
+              const errorText = await response.text().catch(() => response.statusText);
+              throw new Error(`HTTP ${response.status}: ${errorText}`);
+            }
+            
+            const result = await response.json() as { storageId: string };
+            videoStorageId = result.storageId;
+            fastify.log.info({ desktopId, storageId: videoStorageId }, "🎥 Video uploaded to Convex storage");
+            return result;
+          } catch (storageError: unknown) {
+            fastify.log.warn({ desktopId, err: storageError }, "⚠️ Failed to upload video to Convex storage");
+            return undefined;
+          }
+        })();
+        
+        // Try to get storageId quickly (1s timeout for videos), but don't block
+        try {
+          await Promise.race([
+            videoStoragePromise,
+            new Promise((resolve) => setTimeout(resolve, 1000)) // 1s timeout for videos
+          ]);
+        } catch (error) {
+          // Ignore - storage will continue in background
+        }
 
         // Analyze video with LLM (pass MIME type)
         let aiResponse: string | undefined;
@@ -483,9 +605,10 @@ Provide a detailed analysis of what happens in this video, ensuring you capture 
           fastify.log.error({ desktopId, err: error }, "Failed to analyze video with LLM");
           // Continue even if LLM fails
         }
-
+        
         return {
-          videoUrl: `data:${videoMimeType};base64,${base64.substring(0, 50)}...`,
+          videoUrl: `data:${videoMimeType};base64,${base64}`, // Keep for immediate preview
+          storageId: videoStorageId, // May be undefined if upload not complete yet
           duration,
           status: "uploaded",
           analysis: aiResponse,

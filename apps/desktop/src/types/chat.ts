@@ -12,7 +12,9 @@ export interface ChatMessage {
 export interface SendMessageRequest {
   message: string
   requestScreenshot?: boolean
+  screenshotUrl?: string
   videoUrl?: string
+  storageId?: string // Convex storage ID for media
 }
 
 export interface SendMessageResponse {
