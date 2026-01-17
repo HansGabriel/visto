@@ -3,6 +3,7 @@ import { View, Text, TextInput, Pressable, ScrollView, KeyboardAvoidingView, Pla
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { StarField } from "../components/StarField";
 import { MessageBubble } from "../components/MessageBubble";
 import { AttachmentModal } from "../components/AttachmentModal";
@@ -10,6 +11,7 @@ import { RecordingOverlay } from "../components/RecordingOverlay";
 import { useSession } from "../context/SessionContext";
 import { useChat } from "../hooks/useChat";
 import { useRecording } from "../hooks/useRecording";
+import { API_ENDPOINTS } from "../utils/constants";
 
 // Types
 interface ChatScreenProps {
@@ -29,6 +31,12 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
   const [inputText, setInputText] = useState("");
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
+  const [screenshotPreview, setScreenshotPreview] = useState<{
+    previewUrl: string;
+    screenshotUrl: string;
+    storageId?: string;
+  } | null>(null);
+  const [isRequestingScreenshot, setIsRequestingScreenshot] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -71,13 +79,21 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
   }, [isRecording]);
 
   async function handleSend() {
-    if (!inputText.trim() || !sessionId) {
+    if ((!inputText.trim() && !screenshotPreview) || !sessionId) {
       return;
     }
 
     try {
-      await sendMessage(inputText.trim());
+      await sendMessage(
+        inputText.trim(),
+        false,
+        screenshotPreview?.screenshotUrl,
+        undefined,
+        screenshotPreview?.previewUrl,
+        screenshotPreview?.storageId
+      );
       setInputText("");
+      setScreenshotPreview(null);
     } catch (error) {
       console.error('Failed to send message:', error);
     }
@@ -89,11 +105,77 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
       return;
     }
 
+    setIsRequestingScreenshot(true);
     try {
-      // Send message with screenshot request
-      await sendMessage("", true); // requestScreenshot: true
+      // Request screenshot (without creating a message)
+      const requestResponse = await fetch(API_ENDPOINTS.CHAT_REQUEST_SCREENSHOT(sessionId), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!requestResponse.ok) {
+        throw new Error('Failed to request screenshot');
+      }
+
+      const { requestId } = await requestResponse.json();
+      
+      // Poll for the screenshot result (base64 URL should be available instantly)
+      // Give desktop a moment to process, then poll every 500ms
+      let attempts = 0;
+      const maxAttempts = 10; // Wait up to 5 seconds (10 attempts * 500ms)
+      
+      // Small initial delay to give desktop time to process the request
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      while (attempts < maxAttempts) {
+        // Wait 500ms between attempts
+        if (attempts > 0) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        attempts++;
+        
+        // Get screenshot result
+        try {
+          const resultResponse = await fetch(API_ENDPOINTS.CHAT_GET_SCREENSHOT_RESULT(sessionId, requestId), {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+
+          if (resultResponse.ok) {
+            const result = await resultResponse.json();
+            if (result.screenshotUrl) {
+              // Found the screenshot! Show preview
+              setScreenshotPreview({
+                previewUrl: result.screenshotUrl,
+                screenshotUrl: result.screenshotUrl,
+                storageId: result.storageId,
+              });
+              setIsRequestingScreenshot(false);
+              return;
+            }
+          } else if (resultResponse.status === 404) {
+            // 404 means not ready yet - continue polling
+            continue;
+          } else {
+            // Other error - log but continue polling
+            console.warn('Error fetching screenshot result:', resultResponse.status);
+          }
+        } catch (error) {
+          // Network error - continue polling
+          console.warn('Network error fetching screenshot result:', error);
+        }
+      }
+      
+      // If we didn't get it, show error
+      setIsRequestingScreenshot(false);
+      console.error('Screenshot request timed out after', maxAttempts, 'seconds');
     } catch (error) {
       console.error('Failed to request screenshot:', error);
+      setIsRequestingScreenshot(false);
     }
   }
 
@@ -214,27 +296,31 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
             <View className="flex-1 bg-gray-800 border-2 border-accent-blue shadow-xl shadow-accent-blue rounded-full flex-row items-center px-4 py-3">
             <Pressable
               onPress={() => setShowAttachmentModal(true)}
-              disabled={!sessionId || isSending || isRecording}
+              disabled={!sessionId || isSending || isRecording || isRequestingScreenshot}
               className={`w-8 h-8 bg-accent-pink border border-accent-blue rounded-full items-center justify-center mr-3 active:opacity-80 active:scale-95 ${
-                !sessionId || isSending || isRecording ? 'opacity-50' : ''
+                !sessionId || isSending || isRecording || isRequestingScreenshot ? 'opacity-50' : ''
               }`}
               accessibilityRole="button"
               accessibilityLabel="Add attachment"
               accessibilityHint="Attach screenshot or video"
             >
-              <Text className="text-white text-lg">+</Text>
+              {isRequestingScreenshot ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <Text className="text-white text-lg">+</Text>
+              )}
             </Pressable>
             
             <TextInput
               value={inputText}
               onChangeText={setInputText}
-              placeholder="Type a message..."
+              placeholder={screenshotPreview ? "Add a message (optional)..." : "Type a message..."}
               placeholderTextColor="#9CA3AF"
               className="flex-1 text-white text-base"
               multiline
               maxLength={500}
               textAlignVertical="center"
-              editable={!!sessionId && !isSending && !isRecording}
+              editable={!!sessionId && !isSending && !isRecording && !isRequestingScreenshot}
             />
             
             <Pressable
@@ -253,9 +339,9 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
             
             <Pressable
               onPress={handleSend}
-              disabled={!inputText.trim() || isSending || !sessionId}
+              disabled={(!inputText.trim() && !screenshotPreview) || isSending || !sessionId}
               className={`w-12 h-12 rounded-full items-center justify-center active:opacity-80 active:scale-95 ${
-                inputText.trim() && !isSending && sessionId
+                (inputText.trim() || screenshotPreview) && !isSending && sessionId
                   ? 'bg-accent-blue border-2 border-accent-pink shadow-lg shadow-accent-pink' 
                   : 'bg-gray-700 border-2 border-gray-600 opacity-50'
               }`}
@@ -266,10 +352,48 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
               {isSending ? (
                 <ActivityIndicator size="small" color="white" />
               ) : (
-                <Text className={inputText.trim() && sessionId ? "text-white text-2xl" : "text-gray-500 text-2xl"}>➤</Text>
+                <Text className={(inputText.trim() || screenshotPreview) && sessionId ? "text-white text-2xl" : "text-gray-500 text-2xl"}>➤</Text>
               )}
             </Pressable>
           </View>
+          
+          {/* Screenshot Preview */}
+          {screenshotPreview && (
+            <View className="relative flex-row items-start gap-3 p-3 bg-gray-800/50 border-2 border-accent-pink rounded-xl mb-2">
+              <View className="flex-shrink-0">
+                <Image
+                  source={{ uri: screenshotPreview.previewUrl }}
+                  style={{ width: 80, height: 80, borderRadius: 8 }}
+                  contentFit="cover"
+                  transition={200}
+                />
+              </View>
+              <View className="flex-1">
+                <View className="flex-row items-center gap-2 mb-1">
+                  <Ionicons name="camera" size={16} color="#EC4899" />
+                  <Text className="text-white text-sm font-semibold">Screenshot captured</Text>
+                </View>
+                <Text className="text-gray-400 text-xs">Ready to send. Add a message above (optional) and tap send.</Text>
+              </View>
+              <Pressable
+                onPress={() => setScreenshotPreview(null)}
+                className="absolute top-2 right-2 w-7 h-7 bg-red-600 border-2 border-white rounded-full items-center justify-center active:opacity-80 active:scale-95"
+                accessibilityRole="button"
+                accessibilityLabel="Remove screenshot"
+                accessibilityHint="Closes the screenshot preview"
+              >
+                <Ionicons name="close" size={18} color="white" />
+              </Pressable>
+            </View>
+          )}
+          
+          {/* Screenshot Requesting Indicator */}
+          {isRequestingScreenshot && (
+            <View className="flex-row items-center gap-2 p-3 bg-gray-800/50 border-2 border-accent-blue rounded-xl mb-2">
+              <ActivityIndicator size="small" color="#EC4899" />
+              <Text className="text-white text-sm">Capturing screenshot...</Text>
+            </View>
+          )}
           
           {/* Connection Status */}
           <View className="items-center mt-2">

@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ConvexHttpClient } from "convex/browser";
 import { analyzeWithLLM, chatWithLLM } from "../services/llm";
+import { getScreenshotCache, deleteScreenshotCache } from "../services/screenshotCache";
 
 // Lazy initialization - create client when needed
 function getConvexClient() {
@@ -296,6 +297,99 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
         fastify.log.error(
           { sessionId: request.params.sessionId, err: error },
           "Failed to fetch chat messages"
+        );
+        reply.code(500).send({ error: errorMessage });
+      }
+    }
+  );
+
+  // Request screenshot (without creating a message)
+  fastify.post(
+    "/api/chat/:sessionId/request-screenshot",
+    async (
+      request: FastifyRequest<{
+        Params: { sessionId: string };
+      }>,
+      reply: FastifyReply
+    ) => {
+      try {
+        const { sessionId } = request.params;
+        const convexClient = getConvexClient();
+
+        // Get desktop ID from session
+        const session = await convexClient.query("functions/sessions:getById" as any, {
+          sessionId: sessionId as any,
+        });
+
+        if (!session?.desktopId) {
+          return reply.code(404).send({ error: "Session not found or desktop not connected" });
+        }
+
+        // Create pending request
+        const requestId = await convexClient.mutation("functions/pendingRequests:create" as any, {
+          desktopId: session.desktopId,
+          requestType: "screenshot",
+          processed: false,
+          createdAt: Date.now(),
+        });
+
+        // Ensure requestId is a string for consistency
+        const requestIdString = String(requestId);
+        fastify.log.info({ sessionId, requestId: requestIdString }, "📸 Screenshot request created");
+
+        return {
+          requestId: requestIdString,
+          status: "requested",
+        };
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        fastify.log.error(
+          { sessionId: request.params.sessionId, err: error },
+          "Failed to request screenshot"
+        );
+        reply.code(500).send({ error: errorMessage });
+      }
+    }
+  );
+
+  // Get screenshot result
+  fastify.get(
+    "/api/chat/:sessionId/screenshot-result/:requestId",
+    async (
+      request: FastifyRequest<{
+        Params: { sessionId: string; requestId: string };
+      }>,
+      reply: FastifyReply
+    ) => {
+      try {
+        const { requestId } = request.params;
+        const convexClient = getConvexClient();
+
+        // Ensure requestId is a string for cache lookup
+        const requestIdString = String(requestId);
+        
+        // First check in-memory cache for instant base64 URL
+        const cached = getScreenshotCache(requestIdString);
+        if (cached) {
+          fastify.log.info({ requestId: requestIdString }, "📸 Screenshot found in cache");
+          return {
+            screenshotUrl: cached.base64Url,
+            storageId: undefined, // Not ready yet
+            isTemporary: true, // Indicates this is a base64 URL, not storage URL
+          };
+        }
+
+        // If not in cache, check Convex for storage URL (if we had storage support)
+        // For now, just return 404 if not in cache
+        fastify.log.warn({ requestId: requestIdString }, "📸 Screenshot not found in cache");
+
+        // Not ready yet
+        return reply.code(404).send({ error: "Screenshot result not available yet" });
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        fastify.log.error(
+          { requestId: request.params.requestId, err: error },
+          "Failed to get screenshot result"
         );
         reply.code(500).send({ error: errorMessage });
       }
