@@ -11,7 +11,7 @@ function getConvexClient() {
   return new ConvexHttpClient(url);
 }
 
-export default async function chatRoutes(fastify: FastifyInstance) {
+export default async function chatRoutes(fastify: FastifyInstance): Promise<void> {
   // Send chat message
   fastify.post(
     "/api/chat/:sessionId/message",
@@ -51,7 +51,6 @@ export default async function chatRoutes(fastify: FastifyInstance) {
         // If screenshot is requested, create pending request
         if (requestScreenshot) {
           // Get desktop ID from session
-          const convexClient = getConvexClient();
           const session = await convexClient.query("sessions:getById" as any, {
             sessionId: sessionId as any,
           });
@@ -78,10 +77,11 @@ export default async function chatRoutes(fastify: FastifyInstance) {
             // Extract base64 from videoUrl or fetch it
             // For now, we'll expect base64 data URL
             const base64Data = videoUrl.replace(/^data:video\/mp4;base64,/, "");
-            aiResponse = await analyzeWithLLM(base64Data, "video", message);
-          } catch (error: any) {
-            console.error("LLM analysis error:", error);
-            aiResponse = `Error analyzing video: ${error.message}`;
+            aiResponse = await analyzeWithLLM(base64Data, "video", message, undefined, fastify.log);
+          } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : "Unknown error";
+            fastify.log.error({ sessionId, err: error }, "LLM analysis error");
+            aiResponse = `Error analyzing video: ${errorMessage}`;
           }
         }
 
@@ -102,8 +102,13 @@ export default async function chatRoutes(fastify: FastifyInstance) {
           aiResponse,
           status: aiResponse ? "processed" : "pending",
         };
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        fastify.log.error(
+          { sessionId: request.params.sessionId, err: error },
+          "Failed to process chat message"
+        );
+        reply.code(500).send({ error: errorMessage });
       }
     }
   );
@@ -129,7 +134,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
           }
         );
 
-        const messages = (messagesData || []).map((msg: any) => ({
+        const messages = (messagesData || []).map((msg: { _id: string; role: string; content: string; mediaType: string | null; mediaUrl?: string; createdAt: number }) => ({
           messageId: msg._id,
           role: msg.role,
           content: msg.content,
@@ -139,8 +144,13 @@ export default async function chatRoutes(fastify: FastifyInstance) {
         }));
 
         return { messages };
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        fastify.log.error(
+          { sessionId: request.params.sessionId, err: error },
+          "Failed to fetch chat messages"
+        );
+        reply.code(500).send({ error: errorMessage });
       }
     }
   );

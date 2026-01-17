@@ -1,36 +1,141 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 
-// Using Gemini 1.5 Flash as default (fast, free tier)
-// Can be switched to gemini-1.5-pro in backend if needed for better video analysis
-const DEFAULT_MODEL = "gemini-1.5-flash";
+// Using Gemini 2.5 Flash as default (fast, cost-efficient, current stable model)
+// Will automatically try fallback models if this fails
+const DEFAULT_MODEL = "gemini-2.5-flash";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY!);
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_KEY! });
 
 export async function analyzeWithLLM(
   mediaBase64: string,
   mediaType: "image" | "video",
   userQuery: string,
-  model?: "gemini-1.5-flash" | "gemini-1.5-pro" // Optional model override
+  model?: string, // Optional model override
+  logger?: { info: (obj: unknown, msg: string) => void; error: (obj: unknown, msg: string) => void }
 ): Promise<string> {
   // Use provided model or default to Flash
   const modelName = model || DEFAULT_MODEL;
-  const geminiModel = genAI.getGenerativeModel({ model: modelName });
-
+  
   // Determine MIME type based on media type
   const mimeType = mediaType === "video" ? "video/mp4" : "image/png";
+  const mediaSizeKB = Math.round(mediaBase64.length * 0.75 / 1024); // Approximate size
 
-  // Generate content with media and query
-  const result = await geminiModel.generateContent([
-    {
-      inlineData: {
-        data: mediaBase64,
-        mimeType,
-      },
-    },
-    userQuery,
-  ]);
+  if (logger) {
+    logger.info({ model: modelName, mediaType, mediaSizeKB, queryLength: userQuery.length }, `🤖 Calling Gemini ${modelName} for ${mediaType} analysis`);
+  }
 
-  return result.response.text();
+  const startTime = Date.now();
+
+  try {
+    // Generate content with media and query using new API
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: [
+        {
+          inlineData: {
+            mimeType,
+            data: mediaBase64,
+          },
+        },
+        { text: userQuery },
+      ],
+    });
+
+    const responseText = response.text || "";
+    const duration = Date.now() - startTime;
+
+    if (logger) {
+      logger.info({ model: modelName, mediaType, duration, responseLength: responseText.length }, `🤖 Gemini ${modelName} response received`);
+    }
+
+    return responseText;
+  } catch (error: unknown) {
+    const duration = Date.now() - startTime;
+    
+    // Enhanced error logging with fallback logic
+    if (error instanceof Error) {
+      const errorDetails: Record<string, unknown> = {
+        model: modelName,
+        mediaType,
+        duration,
+        message: error.message,
+      };
+      
+      // Check if it's an API error with status code
+      if ('status' in error) {
+        errorDetails.status = (error as { status?: number }).status;
+      }
+      if ('statusText' in error) {
+        errorDetails.statusText = (error as { statusText?: string }).statusText;
+      }
+      
+      if (logger) {
+        logger.error(errorDetails, `🤖 Gemini ${modelName} error`);
+      }
+      
+      // If model not found, try fallback models
+      if (error.message.includes('404') || error.message.includes('not found')) {
+        // Try fallback models in order (current active models)
+        const fallbackModels = [
+          "gemini-2.0-flash",
+          "gemini-3-flash-preview",
+          "gemini-2.5-pro",
+          "gemini-1.5-flash",
+        ];
+        
+        if (logger) {
+          logger.info({ originalModel: modelName, fallbacks: fallbackModels }, `🤖 Trying fallback models for ${modelName}`);
+        }
+        
+        // Try fallback models
+        for (const fallbackModel of fallbackModels) {
+          if (fallbackModel === modelName) continue; // Skip if already tried
+          
+          try {
+            if (logger) {
+              logger.info({ fallbackModel }, `🤖 Trying fallback model: ${fallbackModel}`);
+            }
+            
+            const fallbackResponse = await ai.models.generateContent({
+              model: fallbackModel,
+              contents: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: mediaBase64,
+                  },
+                },
+                { text: userQuery },
+              ],
+            });
+            
+            const fallbackResponseText = fallbackResponse.text || "";
+            const totalDuration = Date.now() - startTime;
+            
+            if (logger) {
+              logger.info({ model: fallbackModel, mediaType, duration: totalDuration, responseLength: fallbackResponseText.length }, `🤖 Gemini ${fallbackModel} response received (fallback)`);
+            }
+            
+            return fallbackResponseText;
+          } catch (fallbackError: unknown) {
+            if (logger) {
+              logger.info({ fallbackModel, err: fallbackError }, `🤖 Fallback model ${fallbackModel} also failed`);
+            }
+            // Continue to next fallback
+          }
+        }
+        
+        // All fallbacks failed
+        throw new Error(`Gemini model "${modelName}" and all fallback models failed. Please check your API key has access to Gemini models. Error: ${error.message}`);
+      }
+    } else {
+      if (logger) {
+        logger.error({ model: modelName, mediaType, duration, err: error }, `🤖 Gemini ${modelName} error`);
+      }
+    }
+    
+    throw error;
+  }
 }
 
 // Optional: Helper function to switch models if needed later
@@ -40,5 +145,5 @@ export async function analyzeWithGeminiPro(
   mediaType: "image" | "video",
   userQuery: string
 ): Promise<string> {
-  return analyzeWithLLM(mediaBase64, mediaType, userQuery, "gemini-1.5-pro");
+  return analyzeWithLLM(mediaBase64, mediaType, userQuery, "gemini-2.5-pro");
 }

@@ -10,7 +10,7 @@ function getConvexClient() {
   return new ConvexHttpClient(url);
 }
 
-export default async function mobileRoutes(fastify: FastifyInstance) {
+export default async function mobileRoutes(fastify: FastifyInstance): Promise<void> {
   // Pair with desktop using code
   fastify.post(
     "/api/mobile/pair",
@@ -45,12 +45,16 @@ export default async function mobileRoutes(fastify: FastifyInstance) {
           mobileConnected: true,
         });
 
+        fastify.log.info({ sessionId, desktopId: session.desktopId }, "Mobile paired");
+
         return {
           sessionId,
           desktopId: session.desktopId,
         };
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        fastify.log.error({ err: error }, "Failed to pair mobile");
+        reply.code(500).send({ error: errorMessage });
       }
     }
   );
@@ -91,8 +95,13 @@ export default async function mobileRoutes(fastify: FastifyInstance) {
           recordingId: sessionId,
           status: "recording_started",
         };
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        fastify.log.error(
+          { sessionId: request.params.sessionId, err: error },
+          "Failed to start recording"
+        );
+        reply.code(500).send({ error: errorMessage });
       }
     }
   );
@@ -132,8 +141,13 @@ export default async function mobileRoutes(fastify: FastifyInstance) {
         return {
           status: "stopping",
         };
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        fastify.log.error(
+          { sessionId: request.params.sessionId, err: error },
+          "Failed to stop recording"
+        );
+        reply.code(500).send({ error: errorMessage });
       }
     }
   );
