@@ -23,6 +23,9 @@ function App() {
   const [mobileConnected, setMobileConnected] = useState(false)
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [lastScreenshotResponse, setLastScreenshotResponse] = useState<string | null>(null)
+  const [lastScreenshotPreview, setLastScreenshotPreview] = useState<string | null>(null)
+  const [lastVideoResponse, setLastVideoResponse] = useState<string | null>(null)
+  const [lastVideoPreview, setLastVideoPreview] = useState<string | null>(null)
 
   // Update recording duration every second when recording
   useEffect(() => {
@@ -41,9 +44,13 @@ function App() {
   // Set up polling for pending requests
   usePolling({
     desktopId,
-    onScreenshotRequest: captureScreenshot,
+    onScreenshotRequest: async () => {
+      await captureScreenshot()
+    },
     onStartRecordingRequest: startRecording,
-    onStopRecordingRequest: stopRecording,
+    onStopRecordingRequest: async () => {
+      await stopRecording()
+    },
     enabled: !!desktopId,
   })
 
@@ -56,14 +63,19 @@ function App() {
   const handleTestScreenshot = async (query?: string) => {
     try {
       setLastScreenshotResponse(null)
+      setLastScreenshotPreview(null)
       const result = await captureScreenshot(query)
       if (result.analysis) {
         setLastScreenshotResponse(result.analysis)
+      }
+      if (result.previewUrl) {
+        setLastScreenshotPreview(result.previewUrl)
       }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
       console.error('Test screenshot failed:', errorMessage)
       setLastScreenshotResponse(null)
+      setLastScreenshotPreview(null)
     }
   }
 
@@ -76,14 +88,37 @@ function App() {
     }
   }
 
-  const handleStopRecording = async () => {
+  const handleStopRecording = async (query?: string) => {
     try {
-      await stopRecording()
+      // Clean up previous video preview URL
+      if (lastVideoPreview) {
+        URL.revokeObjectURL(lastVideoPreview)
+      }
+      setLastVideoResponse(null)
+      setLastVideoPreview(null)
+      const result = await stopRecording(query)
+      if (result.analysis) {
+        setLastVideoResponse(result.analysis)
+      }
+      if (result.previewUrl) {
+        setLastVideoPreview(result.previewUrl)
+      }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
       console.error('Stop recording failed:', errorMessage)
+      setLastVideoResponse(null)
+      setLastVideoPreview(null)
     }
   }
+
+  // Cleanup video preview URL on unmount
+  useEffect(() => {
+    return () => {
+      if (lastVideoPreview) {
+        URL.revokeObjectURL(lastVideoPreview)
+      }
+    }
+  }, [lastVideoPreview])
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
@@ -127,9 +162,59 @@ function App() {
 
         {lastScreenshotResponse && (
           <div className="p-4 bg-gray-800 rounded-lg border border-gray-700">
-            <h3 className="text-sm font-semibold text-gray-300 mb-2">AI Analysis:</h3>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">📸 Screenshot AI Analysis:</h3>
+            {lastScreenshotPreview && (
+              <div className="mb-3 rounded-lg overflow-hidden border border-gray-600">
+                <img 
+                  src={lastScreenshotPreview} 
+                  alt="Screenshot preview" 
+                  className="w-full h-auto max-h-96 object-contain"
+                />
+              </div>
+            )}
             <p className="text-white whitespace-pre-wrap text-sm leading-relaxed">
               {lastScreenshotResponse}
+            </p>
+          </div>
+        )}
+
+        {lastVideoResponse && (
+          <div className="p-4 bg-gray-800 rounded-lg border border-gray-700">
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">🎥 Video AI Analysis:</h3>
+            {lastVideoPreview && (
+              <div className="mb-3 rounded-lg overflow-hidden border border-gray-600">
+                <video 
+                  src={lastVideoPreview} 
+                  controls 
+                  className="w-full h-auto max-h-96"
+                  preload="auto"
+                  autoPlay={false}
+                  muted
+                  playsInline
+                  onError={(e) => {
+                    console.error('Video playback error:', e)
+                    const videoEl = e.currentTarget
+                    console.error('Video error details:', {
+                      error: videoEl.error,
+                      src: videoEl.src,
+                      networkState: videoEl.networkState,
+                      readyState: videoEl.readyState
+                    })
+                  }}
+                  onLoadedMetadata={(e) => {
+                    console.log('Video metadata loaded:', {
+                      duration: e.currentTarget.duration,
+                      videoWidth: e.currentTarget.videoWidth,
+                      videoHeight: e.currentTarget.videoHeight
+                    })
+                  }}
+                >
+                  Your browser does not support the video tag.
+                </video>
+              </div>
+            )}
+            <p className="text-white whitespace-pre-wrap text-sm leading-relaxed">
+              {lastVideoResponse}
             </p>
           </div>
         )}

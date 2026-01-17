@@ -3,7 +3,7 @@ import { useState } from 'react'
 interface RecordingControlProps {
   onTestScreenshot: (query?: string) => void
   onStartRecording: () => void
-  onStopRecording: () => void
+  onStopRecording: (query?: string) => void
   isRecording: boolean
   isCapturing: boolean
   isDisabled?: boolean
@@ -17,10 +17,15 @@ export function RecordingControl({
   isCapturing,
   isDisabled = false,
 }: RecordingControlProps) {
-  const [query, setQuery] = useState('')
+  const [screenshotQuery, setScreenshotQuery] = useState('')
+  const [videoQuery, setVideoQuery] = useState('')
 
   const handleTestScreenshot = () => {
-    onTestScreenshot(query.trim() || undefined)
+    onTestScreenshot(screenshotQuery.trim() || undefined)
+  }
+
+  const handleStopRecording = () => {
+    onStopRecording(videoQuery.trim() || undefined)
   }
 
   return (
@@ -34,8 +39,8 @@ export function RecordingControl({
         <input
           id="screenshot-query"
           type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={screenshotQuery}
+          onChange={(e) => setScreenshotQuery(e.target.value)}
           placeholder="Describe what you see in this screenshot..."
           disabled={isDisabled || isCapturing || isRecording}
           className={`px-3 py-2 rounded-lg bg-gray-700 text-white placeholder-gray-500 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
@@ -58,6 +63,25 @@ export function RecordingControl({
         {isCapturing ? 'Capturing...' : 'Test Screenshot'}
       </button>
 
+      <div className="flex flex-col gap-2">
+        <label htmlFor="video-query" className="text-xs text-gray-400">
+          Video Prompt (optional):
+        </label>
+        <input
+          id="video-query"
+          type="text"
+          value={videoQuery}
+          onChange={(e) => setVideoQuery(e.target.value)}
+          placeholder="Describe what happens in this video..."
+          disabled={isDisabled || isCapturing || isRecording}
+          className={`px-3 py-2 rounded-lg bg-gray-700 text-white placeholder-gray-500 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-colors ${
+            isDisabled || isCapturing || isRecording
+              ? 'opacity-50 cursor-not-allowed'
+              : ''
+          }`}
+        />
+      </div>
+
       {!isRecording ? (
         <button
           onClick={onStartRecording}
@@ -72,7 +96,7 @@ export function RecordingControl({
         </button>
       ) : (
         <button
-          onClick={onStopRecording}
+          onClick={handleStopRecording}
           disabled={isDisabled}
           className="px-4 py-2 rounded-lg font-medium bg-red-600 text-white hover:bg-red-700 active:bg-red-800 transition-colors"
         >
