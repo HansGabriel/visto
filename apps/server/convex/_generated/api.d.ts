@@ -11,6 +11,8 @@
 import type * as functions_messages from "../functions/messages.js";
 import type * as functions_pendingRequests from "../functions/pendingRequests.js";
 import type * as functions_sessions from "../functions/sessions.js";
+import type * as functions_storage from "../functions/storage.js";
+import type * as http from "../http.js";
 
 import type {
   ApiFromModules,
@@ -22,6 +24,8 @@ declare const fullApi: ApiFromModules<{
   "functions/messages": typeof functions_messages;
   "functions/pendingRequests": typeof functions_pendingRequests;
   "functions/sessions": typeof functions_sessions;
+  "functions/storage": typeof functions_storage;
+  http: typeof http;
 }>;
 
 /**

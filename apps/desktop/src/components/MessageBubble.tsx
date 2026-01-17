@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import type { ChatMessage } from '../types/chat'
 
 interface MessageBubbleProps {
@@ -9,6 +9,22 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const isAssistant = message.role === 'assistant'
   const [showMediaFullscreen, setShowMediaFullscreen] = useState(false)
+  const [videoDuration, setVideoDuration] = useState<number | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  // Get video duration when video loads
+  useEffect(() => {
+    if (message.mediaType === 'video' && videoRef.current) {
+      const video = videoRef.current
+      const handleLoadedMetadata = () => {
+        if (video.duration && isFinite(video.duration)) {
+          setVideoDuration(Math.round(video.duration))
+        }
+      }
+      video.addEventListener('loadedmetadata', handleLoadedMetadata)
+      return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata)
+    }
+  }, [message.mediaType, message.mediaUrl])
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-6 items-end gap-2`}>
@@ -36,12 +52,25 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         {/* Message content */}
         <div className="text-sm text-white whitespace-pre-wrap break-words leading-relaxed">
           {message.content}
+          {message.mediaType === 'video' && videoDuration !== null && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-white/70">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+              <span>[Video: {videoDuration}s]</span>
+            </div>
+          )}
         </div>
 
         {/* Media preview */}
-        {message.mediaType && message.mediaUrl && (
+        {message.mediaType && (
           <div className="mt-3 rounded-lg overflow-hidden border border-white/20">
-            {message.mediaType === 'screenshot' && (
+            {message.mediaType === 'screenshot' && message.mediaUrl && (
               <>
                 {!showMediaFullscreen ? (
                   <div className="relative">
@@ -81,54 +110,69 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             )}
             {message.mediaType === 'video' && (
               <>
-                {!showMediaFullscreen ? (
-                  <div className="relative">
-                    <video
-                      src={message.mediaUrl}
-                      controls
-                      className="w-full h-auto max-h-64 bg-black/50"
-                      preload="metadata"
-                    >
-                      Your browser does not support the video tag.
-                    </video>
-                    <button
-                      onClick={() => setShowMediaFullscreen(true)}
-                      className="absolute bottom-2 right-2 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-500 to-blue-500 text-white text-xs font-medium hover:opacity-90 transition-opacity"
-                    >
-                      Tap to view
-                    </button>
-                  </div>
+                {message.mediaUrl ? (
+                  <>
+                    {!showMediaFullscreen ? (
+                      <div className="relative">
+                        <video
+                          ref={videoRef}
+                          src={message.mediaUrl}
+                          controls
+                          className="w-full h-auto max-h-64 bg-black/50 rounded"
+                          preload="metadata"
+                        >
+                          Your browser does not support the video tag.
+                        </video>
+                        <button
+                          onClick={() => setShowMediaFullscreen(true)}
+                          className="absolute bottom-2 right-2 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-500 to-blue-500 text-white text-xs font-medium hover:opacity-90 transition-opacity flex items-center gap-1"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                            />
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                            />
+                          </svg>
+                          View Video
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
+                        <button
+                          onClick={() => setShowMediaFullscreen(false)}
+                          className="absolute top-4 right-4 text-white hover:text-white/70 transition-colors p-2 bg-black/50 rounded-full"
+                          aria-label="Close"
+                        >
+                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                        <video
+                          src={message.mediaUrl}
+                          controls
+                          autoPlay
+                          className="max-w-full max-h-full"
+                        >
+                          Your browser does not support the video tag.
+                        </video>
+                      </div>
+                    )}
+                  </>
                 ) : (
-                  <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
-                    <button
-                      onClick={() => setShowMediaFullscreen(false)}
-                      className="absolute top-4 right-4 text-white hover:text-white/70 transition-colors p-2"
-                      aria-label="Close"
-                    >
-                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                    <video
-                      src={message.mediaUrl}
-                      controls
-                      autoPlay
-                      className="max-w-full max-h-full"
-                    >
-                      Your browser does not support the video tag.
-                    </video>
+                  <div className="p-4 bg-black/30 rounded text-center">
+                    <p className="text-sm text-white/60">🎥 Video was uploaded (preview not available after reload)</p>
                   </div>
                 )}
               </>
             )}
-          </div>
-        )}
-
-        {/* Media type indicator (if no URL) */}
-        {message.mediaType && !message.mediaUrl && (
-          <div className="mt-2 text-xs text-white/60 flex items-center gap-1">
-            {message.mediaType === 'screenshot' && '📸 Screenshot attached'}
-            {message.mediaType === 'video' && '🎥 Video attached'}
           </div>
         )}
       </div>

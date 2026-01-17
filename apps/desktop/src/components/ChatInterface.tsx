@@ -3,19 +3,44 @@ import { MessageBubble } from './MessageBubble'
 import { ChatInput } from './ChatInput'
 import type { ChatMessage } from '../types/chat'
 
+interface ScreenshotPreview {
+  previewUrl: string
+  screenshotUrl: string
+  storageId?: string
+}
+
+interface VideoPreview {
+  previewUrl: string
+  videoUrl: string
+  duration?: number
+  storageId?: string
+}
+
 interface ChatInterfaceProps {
   messages: ChatMessage[]
-  onSendMessage: (message: string, requestScreenshot?: boolean) => Promise<void>
+  onSendMessage: (message: string, requestScreenshot?: boolean, screenshotUrl?: string, videoUrl?: string, mediaPreviewUrl?: string, storageId?: string) => Promise<void>
+  onCaptureScreenshot?: () => Promise<ScreenshotPreview | null>
+  onStartRecording?: () => Promise<void>
+  onStopRecording?: () => Promise<VideoPreview | null>
+  onBack?: () => void
   isLoading?: boolean
   isSending?: boolean
+  isCapturing?: boolean
+  isRecording?: boolean
   sessionId: string | null
 }
 
 export function ChatInterface({
   messages,
   onSendMessage,
+  onCaptureScreenshot,
+  onStartRecording,
+  onStopRecording,
+  onBack,
   isLoading = false,
   isSending = false,
+  isCapturing = false,
+  isRecording = false,
   sessionId,
 }: ChatInterfaceProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -48,8 +73,9 @@ export function ChatInterface({
       {/* Header */}
       <div className="relative z-10 flex items-center justify-between px-4 py-3 bg-black/40 backdrop-blur-sm border-b border-white/10">
         <button
-          onClick={() => window.history.back()}
-          className="text-white/60 hover:text-white transition-colors p-2"
+          onClick={onBack}
+          disabled={!onBack}
+          className="text-white/60 hover:text-white transition-colors p-2 disabled:opacity-30 disabled:cursor-not-allowed"
           aria-label="Back"
         >
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -123,8 +149,13 @@ export function ChatInterface({
         <div className="relative z-10 border-t border-white/10 bg-black/40 backdrop-blur-sm">
           <ChatInput
             onSendMessage={onSendMessage}
+            onCaptureScreenshot={onCaptureScreenshot}
+            onStartRecording={onStartRecording}
+            onStopRecording={onStopRecording}
             isDisabled={!sessionId}
             isSending={isSending}
+            isCapturing={isCapturing}
+            isRecording={isRecording}
           />
         </div>
       )}

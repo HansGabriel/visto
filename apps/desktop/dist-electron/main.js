@@ -27,7 +27,7 @@ function createWindow() {
       preload: path.join(__dirname$1, "preload.mjs"),
       contextIsolation: true,
       // Mandatory
-      sandbox: true,
+      sandbox: false,
       // Strongly recommended - CSP handles localhost connections
       webSecurity: true
       // Keep web security enabled

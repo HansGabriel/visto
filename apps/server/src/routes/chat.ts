@@ -38,18 +38,27 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
         Body: {
           message: string;
           requestScreenshot?: boolean;
+          screenshotUrl?: string;
           videoUrl?: string;
+          storageId?: string; // Convex storage ID for media
         };
       }>,
       reply: FastifyReply
     ) => {
       try {
         const { sessionId } = request.params;
-        const { message, requestScreenshot, videoUrl } = request.body;
+        const { message, requestScreenshot, screenshotUrl, videoUrl, storageId } = request.body;
 
-        if (!message) {
-          return reply.code(400).send({ error: "Message is required" });
+        // Message is required unless we have media
+        if (!message && !screenshotUrl && !videoUrl) {
+          return reply.code(400).send({ error: "Message or media is required" });
         }
+
+        // Determine media type
+        const mediaType = screenshotUrl ? ("screenshot" as const) : videoUrl ? ("video" as const) : null;
+        // Always preserve screenshotUrl as fallback, even when storageId exists
+        // This ensures we can display the media if storage retrieval fails
+        const mediaUrl = screenshotUrl || undefined;
 
         // Create user message in Convex
         const convexClient = getConvexClient();
@@ -58,9 +67,10 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
           {
             sessionId: sessionId as any,
             role: "user",
-            content: message,
-            mediaType: videoUrl ? ("video" as const) : null,
-            mediaUrl: videoUrl || undefined,
+            content: message || (screenshotUrl ? "Screenshot" : videoUrl ? "Video recording" : ""),
+            mediaType,
+            mediaStorageId: storageId ? (storageId as any) : undefined, // Use Convex storage ID
+            mediaUrl, // Fallback for screenshots without storageId
             createdAt: Date.now(),
           }
         );
@@ -87,26 +97,98 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
           };
         }
 
-        // Analyze with LLM - handle both text-only and video messages
+        // Analyze with LLM - handle text-only, screenshot, and video messages
         let aiResponse: string | undefined;
+        const userQuery = message || (screenshotUrl ? "Describe what you see in this screenshot in detail." : videoUrl || storageId ? "Analyze this video and describe what happens." : "");
         
-        if (videoUrl) {
-          // Video analysis
+        // Handle video analysis - either from videoUrl or storageId
+        if (mediaType === "video") {
           try {
-            fastify.log.info({ sessionId, messageLength: message.length }, "🎥 Starting video analysis");
-            const base64Data = videoUrl.replace(/^data:video\/mp4;base64,/, "");
-            aiResponse = await analyzeWithLLM(base64Data, "video", message, undefined, fastify.log);
-            fastify.log.info({ sessionId, responseLength: aiResponse.length }, "🎥 Video analysis complete");
+            fastify.log.info({ sessionId, queryLength: userQuery.length, hasVideoUrl: !!videoUrl, hasStorageId: !!storageId }, "🎥 Starting video analysis");
+            
+            let videoBase64: string | undefined;
+            let mimeType = "video/webm"; // Default MIME type
+            
+            // If we have videoUrl (data URL), extract base64
+            if (videoUrl) {
+              // Extract MIME type from data URL
+              const mimeMatch = videoUrl.match(/^data:video\/([^;]+)/);
+              if (mimeMatch) {
+                mimeType = `video/${mimeMatch[1]}`;
+              }
+              videoBase64 = videoUrl.replace(/^data:video\/[^;]+;base64,/, "");
+              fastify.log.info({ sessionId, mimeType, videoSizeKB: Math.round(videoBase64.length * 0.75 / 1024) }, "🎥 Using videoUrl for analysis");
+            } else if (storageId) {
+              // If we only have storageId, get the file URL and fetch it
+              try {
+                fastify.log.info({ sessionId, storageId }, "🎥 Fetching video URL from Convex storage");
+                const fileUrl = await convexClient.query("functions/storage:getFileUrl" as any, {
+                  storageId: storageId as any,
+                });
+                
+                if (fileUrl) {
+                  fastify.log.info({ sessionId, storageId, fileUrl }, "🎥 Fetching video file from Convex storage for analysis");
+                  // Fetch the video file
+                  const videoResponse = await fetch(fileUrl);
+                  if (!videoResponse.ok) {
+                    throw new Error(`Failed to fetch video from storage: HTTP ${videoResponse.status}`);
+                  }
+                  
+                  // Determine MIME type from response headers or URL
+                  const contentType = videoResponse.headers.get("content-type");
+                  if (contentType && contentType.startsWith("video/")) {
+                    mimeType = contentType;
+                  } else if (fileUrl.includes(".webm")) {
+                    mimeType = "video/webm";
+                  } else if (fileUrl.includes(".mp4")) {
+                    mimeType = "video/mp4";
+                  }
+                  
+                  // Convert to base64
+                  const arrayBuffer = await videoResponse.arrayBuffer();
+                  const buffer = Buffer.from(arrayBuffer);
+                  videoBase64 = buffer.toString("base64");
+                  fastify.log.info({ sessionId, mimeType, videoSizeKB: Math.round(buffer.length / 1024) }, "🎥 Video fetched from storage and converted to base64");
+                } else {
+                  throw new Error("File URL not found for storage ID");
+                }
+              } catch (fetchError: unknown) {
+                const errorMessage = fetchError instanceof Error ? fetchError.message : "Unknown error";
+                fastify.log.error({ sessionId, storageId, err: fetchError, errorMessage }, "❌ Failed to fetch video from storage");
+                throw new Error(`Failed to get video for analysis: ${errorMessage}`);
+              }
+            } else {
+              throw new Error("No video URL or storage ID provided for video analysis");
+            }
+            
+            if (videoBase64) {
+              aiResponse = await analyzeWithLLM(videoBase64, "video", userQuery, undefined, fastify.log, mimeType);
+              fastify.log.info({ sessionId, responseLength: aiResponse.length }, "🎥 Video analysis complete");
+            } else {
+              throw new Error("Failed to get video data for analysis");
+            }
           } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error";
             fastify.log.error({ sessionId, err: error, errorMessage }, "❌ Video analysis error");
             aiResponse = `Error analyzing video: ${errorMessage}`;
           }
+        } else if (screenshotUrl) {
+          // Screenshot analysis
+          try {
+            fastify.log.info({ sessionId, queryLength: userQuery.length }, "📸 Starting screenshot analysis");
+            const base64Data = screenshotUrl.replace(/^data:image\/[^;]+;base64,/, "");
+            aiResponse = await analyzeWithLLM(base64Data, "image", userQuery, undefined, fastify.log);
+            fastify.log.info({ sessionId, responseLength: aiResponse.length }, "📸 Screenshot analysis complete");
+          } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : "Unknown error";
+            fastify.log.error({ sessionId, err: error, errorMessage }, "❌ Screenshot analysis error");
+            aiResponse = `Error analyzing screenshot: ${errorMessage}`;
+          }
         } else {
           // Text-only chat message
           try {
-            fastify.log.info({ sessionId, messageLength: message.length }, "💬 Starting text chat");
-            aiResponse = await chatWithLLM(message, undefined, fastify.log);
+            fastify.log.info({ sessionId, messageLength: userQuery.length }, "💬 Starting text chat");
+            aiResponse = await chatWithLLM(userQuery, undefined, fastify.log);
             fastify.log.info({ sessionId, responseLength: aiResponse.length }, "💬 Text chat complete");
           } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -122,8 +204,9 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
               sessionId: sessionId as any,
               role: "assistant",
               content: aiResponse,
-              mediaType: videoUrl ? ("video" as const) : null,
-              mediaUrl: videoUrl || undefined,
+              mediaType,
+              mediaStorageId: storageId ? (storageId as any) : undefined, // Use Convex storage ID
+              mediaUrl: screenshotUrl || undefined, // Always preserve screenshotUrl as fallback
               createdAt: Date.now(),
             });
             fastify.log.info({ sessionId, responseLength: aiResponse.length }, "✅ Assistant message created in chat");
@@ -171,14 +254,41 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
           }
         );
 
-        const messages = (messagesData || []).map((msg: { _id: string; role: string; content: string; mediaType: string | null; mediaUrl?: string; createdAt: number }) => ({
-          messageId: msg._id,
-          role: msg.role,
-          content: msg.content,
-          mediaType: msg.mediaType,
-          mediaUrl: msg.mediaUrl,
-          createdAt: msg.createdAt,
-        }));
+        // Map messages and get file URLs from storage IDs
+        const messages = await Promise.all(
+          (messagesData || []).map(async (msg: { 
+            _id: string; 
+            role: string; 
+            content: string; 
+            mediaType: string | null; 
+            mediaStorageId?: string;
+            mediaUrl?: string; 
+            createdAt: number 
+          }) => {
+            let mediaUrl = msg.mediaUrl;
+            
+            // If we have a storage ID but no URL, get the URL from Convex
+            if (msg.mediaStorageId && !mediaUrl) {
+              try {
+                const fileUrl = await convexClient.query("functions/storage:getFileUrl" as any, {
+                  storageId: msg.mediaStorageId as any,
+                });
+                mediaUrl = fileUrl || undefined;
+              } catch (error: unknown) {
+                fastify.log.warn({ storageId: msg.mediaStorageId, err: error }, "Failed to get file URL from storage");
+              }
+            }
+            
+            return {
+              messageId: msg._id,
+              role: msg.role,
+              content: msg.content,
+              mediaType: msg.mediaType,
+              mediaUrl,
+              createdAt: msg.createdAt,
+            };
+          })
+        );
 
         return { messages };
       } catch (error: unknown) {

@@ -67,13 +67,20 @@ export function useChat(sessionIdOrOptions: string | null | UseChatOptions) {
 
   // Send a message
   const send = useCallback(
-    async (content: string, requestScreenshot?: boolean) => {
+    async (
+      content: string,
+      requestScreenshot?: boolean,
+      screenshotUrl?: string,
+      videoUrl?: string,
+      mediaPreviewUrl?: string,
+      storageId?: string
+    ) => {
       if (!sessionId) {
         throw new Error('No session ID available')
       }
 
-      if (!content.trim()) {
-        throw new Error('Message content cannot be empty')
+      if (!content.trim() && !screenshotUrl && !videoUrl) {
+        throw new Error('Message content or media is required')
       }
 
       setIsSending(true)
@@ -81,15 +88,28 @@ export function useChat(sessionIdOrOptions: string | null | UseChatOptions) {
 
       try {
         const request: SendMessageRequest = {
-          message: content.trim(),
+          message: content.trim() || (screenshotUrl ? 'Screenshot' : videoUrl ? 'Video recording' : ''),
           requestScreenshot,
+          screenshotUrl,
+          videoUrl,
+          storageId, // Pass Convex storage ID
         }
 
-        // Add user message optimistically
+        // Determine media type and URL for optimistic update
+        const mediaType: 'screenshot' | 'video' | null = screenshotUrl
+          ? 'screenshot'
+          : videoUrl
+          ? 'video'
+          : null
+        const mediaUrl = mediaPreviewUrl || screenshotUrl || videoUrl
+
+        // Add user message optimistically with media preview
         const userMessage: ChatMessage = {
           messageId: `temp-${Date.now()}`,
           role: 'user',
-          content: content.trim(),
+          content: content.trim() || (screenshotUrl ? 'Screenshot' : videoUrl ? 'Video recording' : ''),
+          mediaType,
+          mediaUrl,
           createdAt: Date.now(),
         }
         setMessages((prev) => [...prev, userMessage])

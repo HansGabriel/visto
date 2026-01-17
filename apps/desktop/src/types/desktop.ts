@@ -20,6 +20,7 @@ export interface UploadResponse {
   status: string
   screenshotUrl?: string
   videoUrl?: string
+  storageId?: string // Convex storage ID for persistent storage
   duration?: number
   analysis?: string
   previewUrl?: string

@@ -21,7 +21,7 @@ const fastify = Fastify({
   },
   requestIdLogLabel: "reqId",
   disableRequestLogging: true, // Disable default request logging - we'll log only what we need
-  bodyLimit: 1048576, // 1MB
+  bodyLimit: 50 * 1024 * 1024, // 50MB (for chat messages with media data URLs)
 });
 
 // Allow empty JSON bodies by overriding the default JSON parser
