@@ -1,16 +1,13 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, TextInput, Pressable, ScrollView, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
+import { View, Text, TextInput, Pressable, ScrollView, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { Image } from "expo-image";
+import { Audio } from "expo-av";
 import { StarField } from "../components/StarField";
 import { MessageBubble } from "../components/MessageBubble";
-import { AttachmentModal } from "../components/AttachmentModal";
-import { RecordingOverlay } from "../components/RecordingOverlay";
 import { useSession } from "../context/SessionContext";
 import { useChat } from "../hooks/useChat";
-import { useRecording } from "../hooks/useRecording";
 import { API_ENDPOINTS } from "../utils/constants";
 
 // Types
@@ -29,23 +26,17 @@ const WELCOME_MESSAGE = "How can I help? Connect and ask me anything about your 
 export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps) {
   const { sessionId, clearSession } = useSession();
   const [inputText, setInputText] = useState("");
-  const [showAttachmentModal, setShowAttachmentModal] = useState(false);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [screenshotPreview, setScreenshotPreview] = useState<{
-    previewUrl: string;
-    screenshotUrl: string;
-    storageId?: string;
-  } | null>(null);
-  const [isRequestingScreenshot, setIsRequestingScreenshot] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null);
 
   const { messages, isLoading, isSending, sendMessage, loadMessages } = useChat({
     sessionId,
     enablePolling: true,
     pollingInterval: 2000, // Poll every 2 seconds for quick updates
   });
-  const { startRecording, stopRecording, isRecording } = useRecording(sessionId);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -56,9 +47,9 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
     }
   }, [messages]);
 
-  // Recording timer
+  // Recording timer for voice input
   useEffect(() => {
-    if (isRecording) {
+    if (isRecordingVoice) {
       setRecordingDuration(0);
       recordingIntervalRef.current = setInterval(() => {
         setRecordingDuration((prev) => prev + 1);
@@ -76,136 +67,140 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
         clearInterval(recordingIntervalRef.current);
       }
     };
-  }, [isRecording]);
+  }, [isRecordingVoice]);
 
   async function handleSend() {
-    if ((!inputText.trim() && !screenshotPreview) || !sessionId) {
+    if (!inputText.trim() || !sessionId) {
       return;
     }
 
+    const messageText = inputText.trim();
+    setInputText("");
+
     try {
+      // Simplified: Just send message with requestScreenshot flag
+      // Desktop will capture, upload, and server will create assistant message with screenshot
+      console.log('📤 Sending message with screenshot request...');
       await sendMessage(
-        inputText.trim(),
-        false,
-        screenshotPreview?.screenshotUrl,
-        undefined,
-        screenshotPreview?.previewUrl,
-        screenshotPreview?.storageId
+        messageText,
+        true, // requestScreenshot - desktop will capture and upload
+        undefined, // screenshotUrl - will be in assistant response
+        undefined, // videoUrl
+        undefined, // mediaPreviewUrl
+        undefined // storageId - will be in assistant response
       );
-      setInputText("");
-      setScreenshotPreview(null);
+      console.log('✅ Message sent, waiting for desktop to capture screenshot...');
     } catch (error) {
       console.error('Failed to send message:', error);
+      setInputText(messageText); // Restore text on error
     }
   }
 
-  async function handleTakeScreenshot() {
-    setShowAttachmentModal(false);
-    if (!sessionId) {
-      return;
-    }
-
-    setIsRequestingScreenshot(true);
-    try {
-      // Request screenshot (without creating a message)
-      const requestResponse = await fetch(API_ENDPOINTS.CHAT_REQUEST_SCREENSHOT(sessionId), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!requestResponse.ok) {
-        throw new Error('Failed to request screenshot');
-      }
-
-      const { requestId } = await requestResponse.json();
-      
-      // Poll for the screenshot result (base64 URL should be available instantly)
-      // Give desktop a moment to process, then poll every 500ms
-      let attempts = 0;
-      const maxAttempts = 10; // Wait up to 5 seconds (10 attempts * 500ms)
-      
-      // Small initial delay to give desktop time to process the request
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      while (attempts < maxAttempts) {
-        // Wait 500ms between attempts
-        if (attempts > 0) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        attempts++;
-        
-        // Get screenshot result
-        try {
-          const resultResponse = await fetch(API_ENDPOINTS.CHAT_GET_SCREENSHOT_RESULT(sessionId, requestId), {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-          });
-
-          if (resultResponse.ok) {
-            const result = await resultResponse.json();
-            if (result.screenshotUrl) {
-              // Found the screenshot! Show preview
-              setScreenshotPreview({
-                previewUrl: result.screenshotUrl,
-                screenshotUrl: result.screenshotUrl,
-                storageId: result.storageId,
-              });
-              setIsRequestingScreenshot(false);
-              return;
+  async function handleVoiceInput() {
+    if (isRecordingVoice) {
+      // Stop recording
+      try {
+        if (recordingRef.current) {
+          // Check recording status first
+          const status = await recordingRef.current.getStatusAsync();
+          
+          if (status.isRecording) {
+            // Stop the recording
+            await recordingRef.current.stopAndUnloadAsync();
+            const uri = recordingRef.current.getURI();
+            
+            // Clean up
+            recordingRef.current = null;
+            setIsRecordingVoice(false);
+            
+            if (uri) {
+              // Transcribe audio to text
+              await transcribeAudio(uri);
             }
-          } else if (resultResponse.status === 404) {
-            // 404 means not ready yet - continue polling
-            continue;
           } else {
-            // Other error - log but continue polling
-            console.warn('Error fetching screenshot result:', resultResponse.status);
+            // Already stopped, just clean up
+            recordingRef.current = null;
+            setIsRecordingVoice(false);
           }
-        } catch (error) {
-          // Network error - continue polling
-          console.warn('Network error fetching screenshot result:', error);
+        } else {
+          // No recording ref, just reset state
+          setIsRecordingVoice(false);
         }
+      } catch (error) {
+        console.error('Failed to stop recording:', error);
+        // Force cleanup on error
+        if (recordingRef.current) {
+          try {
+            await recordingRef.current.stopAndUnloadAsync();
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+          recordingRef.current = null;
+        }
+        setIsRecordingVoice(false);
+        Alert.alert('Error', 'Failed to stop recording');
       }
+    } else {
+      // Start recording
+      try {
+        const permissionResponse = await Audio.requestPermissionsAsync();
+        if (!permissionResponse.granted) {
+          Alert.alert('Permission Denied', 'Microphone permission is required for voice input.');
+          return;
+        }
+
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+        });
+
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY
+        );
+        recordingRef.current = recording;
+        setIsRecordingVoice(true);
+      } catch (error) {
+        console.error('Failed to start recording:', error);
+        Alert.alert('Error', 'Failed to start recording. Please check microphone permissions.');
+      }
+    }
+  }
+
+  async function transcribeAudio(uri: string) {
+    try {
+      // Read the audio file and send to server for transcription
+      const response = await fetch(uri);
+      const blob = await response.blob();
       
-      // If we didn't get it, show error
-      setIsRequestingScreenshot(false);
-      console.error('Screenshot request timed out after', maxAttempts, 'seconds');
+      // Create FormData to send audio file
+      const formData = new FormData();
+      formData.append('audio', {
+        uri,
+        type: 'audio/m4a',
+        name: 'recording.m4a',
+      } as any);
+      
+      // Send to server for transcription
+      const apiUrl = API_ENDPOINTS.CHAT_SEND_MESSAGE(sessionId || '').replace('/message', '/transcribe');
+      const transcriptionResponse = await fetch(apiUrl, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (transcriptionResponse.ok) {
+        const { transcription } = await transcriptionResponse.json();
+        if (transcription) {
+          setInputText(transcription);
+        } else {
+          Alert.alert('No transcription', 'Could not transcribe audio. Please try again or type your message.');
+        }
+      } else {
+        throw new Error('Transcription failed');
+      }
     } catch (error) {
-      console.error('Failed to request screenshot:', error);
-      setIsRequestingScreenshot(false);
+      console.error('Failed to transcribe audio:', error);
+      Alert.alert('Error', 'Failed to transcribe audio. Please type your message instead.');
     }
-  }
-
-  async function handleRecordVideo() {
-    setShowAttachmentModal(false);
-    if (!sessionId) {
-      return;
-    }
-
-    try {
-      await startRecording();
-    } catch (error) {
-      console.error('Failed to start recording:', error);
-    }
-  }
-
-  async function handleStopRecording() {
-    try {
-      await stopRecording();
-      // After stopping, send a message asking about the video
-      // The video will be attached automatically by the desktop app
-      await sendMessage("What happened in this recording?");
-    } catch (error) {
-      console.error('Failed to stop recording:', error);
-    }
-  }
-
-  function handleVoiceInput() {
-    console.log("Voice input - functionality to be implemented");
-    // TODO: Implement voice recording
   }
 
   async function handleBack() {
@@ -281,9 +276,9 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
               <Text className="text-white text-lg mb-2">{WELCOME_MESSAGE}</Text>
             </View>
           ) : (
-            messages.map((message) => (
+            messages.map((message, index) => (
               <MessageBubble
-                key={message.messageId}
+                key={`${message.messageId}-${index}`}
                 message={message}
               />
             ))
@@ -294,54 +289,41 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
         <View className="px-4 pb-4">
           <View className="flex-row items-center gap-3 mb-2">
             <View className="flex-1 bg-gray-800 border-2 border-accent-blue shadow-xl shadow-accent-blue rounded-full flex-row items-center px-4 py-3">
-            <Pressable
-              onPress={() => setShowAttachmentModal(true)}
-              disabled={!sessionId || isSending || isRecording || isRequestingScreenshot}
-              className={`w-8 h-8 bg-accent-pink border border-accent-blue rounded-full items-center justify-center mr-3 active:opacity-80 active:scale-95 ${
-                !sessionId || isSending || isRecording || isRequestingScreenshot ? 'opacity-50' : ''
-              }`}
-              accessibilityRole="button"
-              accessibilityLabel="Add attachment"
-              accessibilityHint="Attach screenshot or video"
-            >
-              {isRequestingScreenshot ? (
-                <ActivityIndicator size="small" color="white" />
-              ) : (
-                <Text className="text-white text-lg">+</Text>
-              )}
-            </Pressable>
-            
             <TextInput
               value={inputText}
               onChangeText={setInputText}
-              placeholder={screenshotPreview ? "Add a message (optional)..." : "Type a message..."}
+              placeholder="Type a message..."
               placeholderTextColor="#9CA3AF"
               className="flex-1 text-white text-base"
               multiline
               maxLength={500}
               textAlignVertical="center"
-              editable={!!sessionId && !isSending && !isRecording && !isRequestingScreenshot}
+              editable={!!sessionId && !isSending && !isRecordingVoice}
             />
             
             <Pressable
               onPress={handleVoiceInput}
-              disabled={!sessionId || isSending || isRecording}
-              className={`w-8 h-8 bg-accent-blue border border-accent-pink rounded-full items-center justify-center ml-3 active:opacity-80 active:scale-95 ${
-                !sessionId || isSending || isRecording ? 'opacity-50' : ''
+              disabled={!sessionId || isSending || isRecordingVoice}
+              className={`w-8 h-8 ${isRecordingVoice ? 'bg-red-600' : 'bg-accent-blue'} border border-accent-pink rounded-full items-center justify-center ml-3 active:opacity-80 active:scale-95 ${
+                !sessionId || isSending ? 'opacity-50' : ''
               }`}
               accessibilityRole="button"
-              accessibilityLabel="Voice input"
-              accessibilityHint="Record voice message"
+              accessibilityLabel={isRecordingVoice ? "Stop recording" : "Start voice input"}
+              accessibilityHint={isRecordingVoice ? "Stops recording and transcribes to text" : "Record voice message to convert to text"}
             >
-              <Ionicons name="mic" size={18} color="white" />
+              {isRecordingVoice ? (
+                <View className="w-3 h-3 bg-white rounded" />
+              ) : (
+                <Ionicons name="mic" size={18} color="white" />
+              )}
             </Pressable>
           </View>
             
             <Pressable
               onPress={handleSend}
-              disabled={(!inputText.trim() && !screenshotPreview) || isSending || !sessionId}
+              disabled={!inputText.trim() || isSending || !sessionId || isRecordingVoice}
               className={`w-12 h-12 rounded-full items-center justify-center active:opacity-80 active:scale-95 ${
-                (inputText.trim() || screenshotPreview) && !isSending && sessionId
+                inputText.trim() && !isSending && sessionId && !isRecordingVoice
                   ? 'bg-accent-blue border-2 border-accent-pink shadow-lg shadow-accent-pink' 
                   : 'bg-gray-700 border-2 border-gray-600 opacity-50'
               }`}
@@ -352,46 +334,16 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
               {isSending ? (
                 <ActivityIndicator size="small" color="white" />
               ) : (
-                <Text className={(inputText.trim() || screenshotPreview) && sessionId ? "text-white text-2xl" : "text-gray-500 text-2xl"}>➤</Text>
+                <Text className={inputText.trim() && sessionId && !isRecordingVoice ? "text-white text-2xl" : "text-gray-500 text-2xl"}>➤</Text>
               )}
             </Pressable>
           </View>
           
-          {/* Screenshot Preview */}
-          {screenshotPreview && (
-            <View className="relative flex-row items-start gap-3 p-3 bg-gray-800/50 border-2 border-accent-pink rounded-xl mb-2">
-              <View className="flex-shrink-0">
-                <Image
-                  source={{ uri: screenshotPreview.previewUrl }}
-                  style={{ width: 80, height: 80, borderRadius: 8 }}
-                  contentFit="cover"
-                  transition={200}
-                />
-              </View>
-              <View className="flex-1">
-                <View className="flex-row items-center gap-2 mb-1">
-                  <Ionicons name="camera" size={16} color="#EC4899" />
-                  <Text className="text-white text-sm font-semibold">Screenshot captured</Text>
-                </View>
-                <Text className="text-gray-400 text-xs">Ready to send. Add a message above (optional) and tap send.</Text>
-              </View>
-              <Pressable
-                onPress={() => setScreenshotPreview(null)}
-                className="absolute top-2 right-2 w-7 h-7 bg-red-600 border-2 border-white rounded-full items-center justify-center active:opacity-80 active:scale-95"
-                accessibilityRole="button"
-                accessibilityLabel="Remove screenshot"
-                accessibilityHint="Closes the screenshot preview"
-              >
-                <Ionicons name="close" size={18} color="white" />
-              </Pressable>
-            </View>
-          )}
-          
-          {/* Screenshot Requesting Indicator */}
-          {isRequestingScreenshot && (
-            <View className="flex-row items-center gap-2 p-3 bg-gray-800/50 border-2 border-accent-blue rounded-xl mb-2">
-              <ActivityIndicator size="small" color="#EC4899" />
-              <Text className="text-white text-sm">Capturing screenshot...</Text>
+          {/* Voice Recording Indicator */}
+          {isRecordingVoice && (
+            <View className="flex-row items-center gap-2 p-3 bg-gray-800/50 border-2 border-red-600 rounded-xl mb-2">
+              <View className="w-3 h-3 bg-red-600 rounded-full" />
+              <Text className="text-white text-sm">Recording... {recordingDuration}s</Text>
             </View>
           )}
           
@@ -411,21 +363,6 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
         </View>
       </KeyboardAvoidingView>
 
-      {/* Attachment Modal */}
-      <AttachmentModal
-        visible={showAttachmentModal}
-        onClose={() => setShowAttachmentModal(false)}
-        onTakeScreenshot={handleTakeScreenshot}
-        onRecordVideo={handleRecordVideo}
-      />
-
-      {/* Recording Overlay */}
-      <RecordingOverlay
-        isRecording={isRecording}
-        duration={recordingDuration}
-        onStop={handleStopRecording}
-        maxDuration={30}
-      />
     </SafeAreaView>
   );
 }

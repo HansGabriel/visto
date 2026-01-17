@@ -1,7 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ConvexHttpClient } from "convex/browser";
 import { analyzeWithLLM, chatWithLLM } from "../services/llm";
-import { getScreenshotCache, deleteScreenshotCache } from "../services/screenshotCache";
 
 // Lazy initialization - create client when needed
 function getConvexClient() {
@@ -50,6 +49,17 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
         const { sessionId } = request.params;
         const { message, requestScreenshot, screenshotUrl, videoUrl, storageId } = request.body;
 
+        // Log what we received for debugging
+        fastify.log.info({ 
+          sessionId, 
+          hasMessage: !!message, 
+          hasScreenshotUrl: !!screenshotUrl,
+          hasVideoUrl: !!videoUrl,
+          hasStorageId: !!storageId,
+          screenshotUrlLength: screenshotUrl?.length || 0,
+          messageLength: message?.length || 0
+        }, "📨 Received message request");
+
         // Message is required unless we have media
         if (!message && !screenshotUrl && !videoUrl) {
           return reply.code(400).send({ error: "Message or media is required" });
@@ -57,23 +67,29 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
 
         // Determine media type
         const mediaType = screenshotUrl ? ("screenshot" as const) : videoUrl ? ("video" as const) : null;
-        // Always preserve screenshotUrl as fallback, even when storageId exists
-        // This ensures we can display the media if storage retrieval fails
-        const mediaUrl = screenshotUrl || undefined;
+        // NOTE: Do NOT store base64 URLs in Convex - they exceed the 1MB limit
+        // Only store storageId if available. Base64 URLs are used only for LLM analysis.
 
         // Create user message in Convex
         const convexClient = getConvexClient();
+        // Build mutation args without mediaUrl (never store base64 URLs)
+        const messageArgs: any = {
+          sessionId: sessionId as any,
+          role: "user",
+          content: message || (screenshotUrl ? "Screenshot" : videoUrl ? "Video recording" : ""),
+          mediaType,
+          createdAt: Date.now(),
+        };
+        // Only include mediaStorageId if we have it
+        if (storageId) {
+          messageArgs.mediaStorageId = storageId as any;
+        }
+        // EXPLICITLY DO NOT include mediaUrl - base64 URLs exceed 1MB limit
+        // The Convex function will also skip mediaUrl if it's a base64 data URL
+        
         const messageId = await convexClient.mutation(
           "functions/messages:create" as any,
-          {
-            sessionId: sessionId as any,
-            role: "user",
-            content: message || (screenshotUrl ? "Screenshot" : videoUrl ? "Video recording" : ""),
-            mediaType,
-            mediaStorageId: storageId ? (storageId as any) : undefined, // Use Convex storage ID
-            mediaUrl, // Fallback for screenshots without storageId
-            createdAt: Date.now(),
-          }
+          messageArgs
         );
 
         // If screenshot is requested, create pending request
@@ -174,10 +190,16 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
             aiResponse = `Error analyzing video: ${errorMessage}`;
           }
         } else if (screenshotUrl) {
-          // Screenshot analysis
+          // Screenshot analysis - analyze screenshot with user's text query
           try {
-            fastify.log.info({ sessionId, queryLength: userQuery.length }, "📸 Starting screenshot analysis");
+            fastify.log.info({ sessionId, queryLength: userQuery.length, screenshotUrlLength: screenshotUrl.length }, "📸 Starting screenshot analysis");
             const base64Data = screenshotUrl.replace(/^data:image\/[^;]+;base64,/, "");
+            
+            if (!base64Data || base64Data.length === 0) {
+              throw new Error("Screenshot base64 data is empty");
+            }
+            
+            fastify.log.info({ sessionId, base64Length: base64Data.length }, "📸 Screenshot base64 extracted, sending to LLM");
             aiResponse = await analyzeWithLLM(base64Data, "image", userQuery, undefined, fastify.log);
             fastify.log.info({ sessionId, responseLength: aiResponse.length }, "📸 Screenshot analysis complete");
           } catch (error: unknown) {
@@ -186,7 +208,7 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
             aiResponse = `Error analyzing screenshot: ${errorMessage}`;
           }
         } else {
-          // Text-only chat message
+          // Text-only chat message (but we should still try to get screenshot for reference)
           try {
             fastify.log.info({ sessionId, messageLength: userQuery.length }, "💬 Starting text chat");
             aiResponse = await chatWithLLM(userQuery, undefined, fastify.log);
@@ -201,16 +223,23 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
         // Create assistant message if we have AI response
         if (aiResponse) {
           try {
-            await convexClient.mutation("functions/messages:create" as any, {
+            // Always attach screenshot to assistant message if we have it (for reference)
+            // NOTE: Only store storageId, never base64 URLs (they exceed 1MB limit)
+            const assistantMessageArgs: any = {
               sessionId: sessionId as any,
               role: "assistant",
               content: aiResponse,
-              mediaType,
-              mediaStorageId: storageId ? (storageId as any) : undefined, // Use Convex storage ID
-              mediaUrl: screenshotUrl || undefined, // Always preserve screenshotUrl as fallback
+              mediaType: screenshotUrl ? ("screenshot" as const) : mediaType, // Attach screenshot to assistant response
               createdAt: Date.now(),
-            });
-            fastify.log.info({ sessionId, responseLength: aiResponse.length }, "✅ Assistant message created in chat");
+            };
+            // Only include mediaStorageId if we have it
+            if (storageId) {
+              assistantMessageArgs.mediaStorageId = storageId as any;
+            }
+            // DO NOT include mediaUrl - it would contain base64 which exceeds 1MB limit
+            
+            await convexClient.mutation("functions/messages:create" as any, assistantMessageArgs);
+            fastify.log.info({ sessionId, responseLength: aiResponse.length, hasScreenshot: !!screenshotUrl, hasStorageId: !!storageId }, "✅ Assistant message created in chat");
           } catch (chatError: unknown) {
             const errorMessage = chatError instanceof Error ? chatError.message : "Unknown error";
             fastify.log.error({ sessionId, err: chatError, errorMessage }, "❌ Failed to create assistant message");
@@ -303,9 +332,13 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
     }
   );
 
-  // Request screenshot (without creating a message)
+  // Screenshot endpoints removed - now handled through message flow
+  // Mobile sends message with requestScreenshot=true, desktop captures and uploads,
+  // server creates assistant message with screenshot storageId, mobile polls messages
+
+  // Transcribe audio to text
   fastify.post(
-    "/api/chat/:sessionId/request-screenshot",
+    "/api/chat/:sessionId/transcribe",
     async (
       request: FastifyRequest<{
         Params: { sessionId: string };
@@ -313,83 +346,31 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
       reply: FastifyReply
     ) => {
       try {
-        const { sessionId } = request.params;
-        const convexClient = getConvexClient();
-
-        // Get desktop ID from session
-        const session = await convexClient.query("functions/sessions:getById" as any, {
-          sessionId: sessionId as any,
-        });
-
-        if (!session?.desktopId) {
-          return reply.code(404).send({ error: "Session not found or desktop not connected" });
+        const data = await request.file();
+        
+        if (!data) {
+          return reply.code(400).send({ error: "No audio file provided" });
         }
 
-        // Create pending request
-        const requestId = await convexClient.mutation("functions/pendingRequests:create" as any, {
-          desktopId: session.desktopId,
-          requestType: "screenshot",
-          processed: false,
-          createdAt: Date.now(),
+        // For now, return a placeholder transcription
+        // In production, you would:
+        // 1. Read the audio file buffer: const buffer = await data.toBuffer();
+        // 2. Convert audio to the format required by your STT service (e.g., Google Speech-to-Text, Whisper API)
+        // 3. Send to the STT service
+        // 4. Return the transcription
+        
+        // Placeholder: Return a message indicating transcription is being set up
+        // TODO: Implement actual speech-to-text using Google Speech-to-Text API, Whisper, or similar
+        fastify.log.info({ sessionId: request.params.sessionId, filename: data.filename }, "🎤 Audio transcription requested (placeholder)");
+        
+        return reply.code(501).send({ 
+          error: "Speech-to-text transcription is not yet implemented. Please type your message." 
         });
-
-        // Ensure requestId is a string for consistency
-        const requestIdString = String(requestId);
-        fastify.log.info({ sessionId, requestId: requestIdString }, "📸 Screenshot request created");
-
-        return {
-          requestId: requestIdString,
-          status: "requested",
-        };
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         fastify.log.error(
           { sessionId: request.params.sessionId, err: error },
-          "Failed to request screenshot"
-        );
-        reply.code(500).send({ error: errorMessage });
-      }
-    }
-  );
-
-  // Get screenshot result
-  fastify.get(
-    "/api/chat/:sessionId/screenshot-result/:requestId",
-    async (
-      request: FastifyRequest<{
-        Params: { sessionId: string; requestId: string };
-      }>,
-      reply: FastifyReply
-    ) => {
-      try {
-        const { requestId } = request.params;
-        const convexClient = getConvexClient();
-
-        // Ensure requestId is a string for cache lookup
-        const requestIdString = String(requestId);
-        
-        // First check in-memory cache for instant base64 URL
-        const cached = getScreenshotCache(requestIdString);
-        if (cached) {
-          fastify.log.info({ requestId: requestIdString }, "📸 Screenshot found in cache");
-          return {
-            screenshotUrl: cached.base64Url,
-            storageId: undefined, // Not ready yet
-            isTemporary: true, // Indicates this is a base64 URL, not storage URL
-          };
-        }
-
-        // If not in cache, check Convex for storage URL (if we had storage support)
-        // For now, just return 404 if not in cache
-        fastify.log.warn({ requestId: requestIdString }, "📸 Screenshot not found in cache");
-
-        // Not ready yet
-        return reply.code(404).send({ error: "Screenshot result not available yet" });
-      } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        fastify.log.error(
-          { requestId: request.params.requestId, err: error },
-          "Failed to get screenshot result"
+          "Failed to transcribe audio"
         );
         reply.code(500).send({ error: errorMessage });
       }

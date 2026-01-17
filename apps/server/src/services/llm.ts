@@ -32,18 +32,28 @@ export async function analyzeWithLLM(
     throw new Error("Media base64 data is empty");
   }
 
-  // For videos, enhance the prompt to ensure comprehensive analysis
+  // Enhance the prompt to be more casual and concise
   // This must be done before the try block so fallback models can use it
   let enhancedQuery = userQuery;
+  
+  // Add system prompt for casual, informative responses
+  const systemPrompt = `You are a helpful virtual assistant. Respond in a friendly, casual, and informative way. Keep responses concise but complete - aim for 2-4 sentences unless more detail is specifically requested. Be conversational and human-like, avoiding overly technical jargon unless necessary.`;
+  
   if (mediaType === "video") {
-    // Add general instructions to analyze all frames comprehensively
-    enhancedQuery = `${userQuery}
+    enhancedQuery = `${systemPrompt}
+
+User's question: ${userQuery}
 
 IMPORTANT: When analyzing this video, ensure you:
 - Examine ALL frames from beginning to end, especially the final frame
 - Capture ALL visible content, details, text, numbers, and information
 - Do not miss or overlook content that appears in later frames
 - Analyze the complete final state shown at the end of the video`;
+  } else {
+    // For images, add the system prompt
+    enhancedQuery = `${systemPrompt}
+
+User's question: ${userQuery}`;
   }
 
   try {
@@ -175,11 +185,18 @@ export async function chatWithLLM(
   const startTime = Date.now();
 
   try {
+    // Add system prompt for casual, informative responses
+    const systemPrompt = `You are a helpful virtual assistant. Respond in a friendly, casual, and informative way. Keep responses concise but complete - aim for 2-4 sentences unless more detail is specifically requested. Be conversational and human-like, avoiding overly technical jargon unless necessary.`;
+    
+    const enhancedMessage = `${systemPrompt}
+
+User's question: ${userMessage}`;
+    
     // Generate content with text only (no media)
     const response = await ai.models.generateContent({
       model: modelName,
       contents: [
-        { text: userMessage },
+        { text: enhancedMessage },
       ],
     });
 
