@@ -2,22 +2,24 @@ import React from "react";
 import { View, Text } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { RootStackParamList } from "../App";
 import { GradientLogo } from "../components/GradientLogo";
 import { GradientButton } from "../components/GradientButton";
 import { StarField } from "../components/StarField";
+
+// Types
+interface HomeScreenProps {
+  onGetStarted: () => void;
+}
 
 // Static content
 const TITLE = "Visto";
 const TAGLINE = "Connect. Analyze. Automate.";
 
-type Props = NativeStackScreenProps<RootStackParamList, "Home">;
-
 // Main component
-export function HomeScreen({ navigation }: Props) {
+export function HomeScreen({ onGetStarted }: HomeScreenProps) {
   function handleGetStarted() {
-    navigation.navigate("SignIn");
+    console.log("Get Started pressed");
+    onGetStarted();
   }
 
   return (
