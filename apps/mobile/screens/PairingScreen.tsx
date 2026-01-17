@@ -24,15 +24,21 @@ const HINT_TEXT = "Find the code in your desktop app's system tray";
 export function PairingScreen({ onBack, onConnected }: PairingScreenProps) {
   const [code, setCode] = useState("");
   const { pair, isLoading, error: pairingError } = usePairing();
+  const [isConnecting, setIsConnecting] = useState(false);
 
   async function handleConnect() {
-    if (code.length !== 6) {
+    if (code.length !== 6 || isLoading || isConnecting) {
       return;
     }
     
-    const result = await pair(code);
-    if (result) {
-      onConnected();
+    setIsConnecting(true);
+    try {
+      const result = await pair(code);
+      if (result) {
+        onConnected();
+      }
+    } finally {
+      setIsConnecting(false);
     }
   }
 
@@ -117,7 +123,7 @@ export function PairingScreen({ onBack, onConnected }: PairingScreenProps) {
             <GradientButton
               title="CONNECT"
               onPress={handleConnect}
-              disabled={code.length !== 6 || isLoading}
+              disabled={code.length !== 6 || isLoading || isConnecting}
               accessibilityLabel="Connect to desktop"
               accessibilityHint="Pairs your device with the desktop application"
             />
