@@ -1,22 +1,13 @@
 "use strict";
 const electron = require("electron");
-electron.contextBridge.exposeInMainWorld("ipcRenderer", {
-  on(...args) {
-    const [channel, listener] = args;
-    return electron.ipcRenderer.on(channel, (event, ...args2) => listener(event, ...args2));
+electron.contextBridge.exposeInMainWorld("electronAPI", {
+  captureScreenshot: () => {
+    return electron.ipcRenderer.invoke("capture-screenshot");
   },
-  off(...args) {
-    const [channel, ...omit] = args;
-    return electron.ipcRenderer.off(channel, ...omit);
+  startRecording: () => {
+    return electron.ipcRenderer.invoke("start-recording");
   },
-  send(...args) {
-    const [channel, ...omit] = args;
-    return electron.ipcRenderer.send(channel, ...omit);
-  },
-  invoke(...args) {
-    const [channel, ...omit] = args;
-    return electron.ipcRenderer.invoke(channel, ...omit);
+  stopRecording: () => {
+    return electron.ipcRenderer.invoke("stop-recording");
   }
-  // You can expose other APTs you need here.
-  // ...
 });
