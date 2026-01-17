@@ -25,14 +25,18 @@ const WELCOME_MESSAGE = "How can I help? Connect and ask me anything about your 
 
 // Main component
 export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps) {
-  const { sessionId } = useSession();
+  const { sessionId, clearSession } = useSession();
   const [inputText, setInputText] = useState("");
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const scrollViewRef = useRef<ScrollView>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const { messages, isLoading, isSending, sendMessage } = useChat(sessionId);
+  const { messages, isLoading, isSending, sendMessage, loadMessages } = useChat({
+    sessionId,
+    enablePolling: true,
+    pollingInterval: 2000, // Poll every 2 seconds for quick updates
+  });
   const { startRecording, stopRecording, isRecording } = useRecording(sessionId);
 
   // Auto-scroll to bottom when new messages arrive
@@ -122,6 +126,17 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
     // TODO: Implement voice recording
   }
 
+  async function handleBack() {
+    // Clear the current session to allow pairing with a new desktop
+    try {
+      await clearSession();
+    } catch (error) {
+      console.error('Failed to clear session:', error);
+    }
+    // Navigate back
+    onBack();
+  }
+
   return (
     <SafeAreaView className="flex-1 bg-space-dark">
       <StatusBar style="light" />
@@ -131,10 +146,11 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
       {/* Header */}
       <View className="flex-row items-center justify-between px-6 py-4">
         <Pressable
-          onPress={onBack}
+          onPress={handleBack}
           className="active:opacity-70"
           accessibilityRole="button"
-          accessibilityLabel="Go back"
+          accessibilityLabel="Go back and create new session"
+          accessibilityHint="Clears current session and returns to home screen"
         >
           <Text className="text-white text-2xl">←</Text>
         </Pressable>

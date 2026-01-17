@@ -85,42 +85,92 @@ export function useChat(sessionIdOrOptions: string | null | UseChatOptions) {
         throw new Error('No session ID available');
       }
 
-      if (!content.trim() && !screenshotUrl && !videoUrl) {
+      // Allow empty content if requesting screenshot or if media is provided
+      if (!content.trim() && !requestScreenshot && !screenshotUrl && !videoUrl) {
         throw new Error('Message content or media is required');
       }
 
-      setIsSending(true);
-      setError(null);
+        setIsSending(true);
+        setError(null);
 
       try {
+        // Capture initial message count before optimistic update
+        const initialMessageCount = messages.length;
+        
         const request: SendMessageRequest = {
-          message: content.trim() || (screenshotUrl ? 'Screenshot' : videoUrl ? 'Video recording' : ''),
+          message: content.trim() || (requestScreenshot ? 'Screenshot request' : screenshotUrl ? 'Screenshot' : videoUrl ? 'Video recording' : ''),
           requestScreenshot,
           screenshotUrl,
           videoUrl,
           storageId,
         };
 
-        // Determine media type and URL for optimistic update
-        const mediaType: 'screenshot' | 'video' | null = screenshotUrl
-          ? 'screenshot'
-          : videoUrl
-          ? 'video'
-          : null;
-        const mediaUrl = mediaPreviewUrl || screenshotUrl || videoUrl;
+        // For screenshot requests, add optimistic message showing "Requesting screenshot..."
+        if (requestScreenshot && !screenshotUrl) {
+          const userMessage: ChatMessage = {
+            messageId: `temp-${Date.now()}`,
+            role: 'user',
+            content: content.trim() || 'Screenshot request',
+            mediaType: null,
+            mediaUrl: undefined,
+            createdAt: Date.now(),
+          };
+          setMessages((prev) => [...prev, userMessage]);
+        } else {
+          // Determine media type and URL for optimistic update
+          const mediaType: 'screenshot' | 'video' | null = screenshotUrl
+            ? 'screenshot'
+            : videoUrl
+            ? 'video'
+            : null;
+          const mediaUrl = mediaPreviewUrl || screenshotUrl || videoUrl;
 
-        // Add user message optimistically with media preview
-        const userMessage: ChatMessage = {
-          messageId: `temp-${Date.now()}`,
-          role: 'user',
-          content: content.trim() || (screenshotUrl ? 'Screenshot' : videoUrl ? 'Video recording' : ''),
-          mediaType,
-          mediaUrl,
-          createdAt: Date.now(),
-        };
-        setMessages((prev) => [...prev, userMessage]);
+          // Add user message optimistically with media preview
+          const userMessage: ChatMessage = {
+            messageId: `temp-${Date.now()}`,
+            role: 'user',
+            content: content.trim() || (screenshotUrl ? 'Screenshot' : videoUrl ? 'Video recording' : ''),
+            mediaType,
+            mediaUrl,
+            createdAt: Date.now(),
+          };
+          setMessages((prev) => [...prev, userMessage]);
+        }
 
         const response = await sendMessage(sessionId, request);
+
+        // For screenshot requests, poll for the response quickly
+        // Desktop will capture, upload, and send back the screenshot
+        if (requestScreenshot) {
+          // Poll up to 5 times with 1 second intervals to get the screenshot quickly
+          let attempts = 0;
+          const maxAttempts = 5;
+          
+          while (attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Get current messages from server
+            const currentMessages = await getMessages(sessionId);
+            
+            // Check if we have new messages (screenshot response)
+            // We expect at least 2 new messages: user message + assistant response with screenshot
+            if (currentMessages.messages.length > initialMessageCount + 1) {
+              const newMessages = currentMessages.messages.slice(initialMessageCount);
+              setMessages((prev) => {
+                // Remove temp message and add new ones
+                const withoutTemp = prev.filter((msg) => !msg.messageId.startsWith('temp-'));
+                return [...withoutTemp, ...newMessages];
+              });
+              return response;
+            }
+            
+            attempts++;
+          }
+          
+          // If polling didn't find new messages, just reload
+          await loadMessages();
+          return response;
+        }
 
         // Reload messages to get the actual message IDs and AI response
         await loadMessages();

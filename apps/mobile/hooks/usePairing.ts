@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { pairWithDesktop } from '../services/api';
 import { useSession } from '../context/SessionContext';
 import type { PairResponse } from '../types/api';
@@ -7,6 +7,7 @@ export function usePairing() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { setSession } = useSession();
+  const pairingInProgress = useRef(false);
 
   const pair = useCallback(async (pairingCode: string): Promise<PairResponse | null> => {
     if (!pairingCode || pairingCode.length !== 6) {
@@ -14,6 +15,12 @@ export function usePairing() {
       return null;
     }
 
+    // Prevent multiple simultaneous pairing attempts
+    if (pairingInProgress.current) {
+      return null;
+    }
+
+    pairingInProgress.current = true;
     setIsLoading(true);
     setError(null);
 
@@ -30,6 +37,7 @@ export function usePairing() {
       return null;
     } finally {
       setIsLoading(false);
+      pairingInProgress.current = false;
     }
   }, [setSession]);
 

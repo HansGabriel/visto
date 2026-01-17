@@ -19,18 +19,32 @@ export async function pairWithDesktop(pairingCode: string): Promise<PairResponse
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Failed to pair with desktop' }));
       const errorMessage = error.error || `Failed to pair: ${response.statusText}`;
-      console.error('Pairing failed:', {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorMessage,
-        pairingCode: pairingCode.substring(0, 2) + '****', // Log partial code for debugging
-        url: API_ENDPOINTS.MOBILE_PAIR,
-      });
-      throw new Error(errorMessage);
+      
+      // Only log system errors (500, network, etc.), not user input errors (404)
+      // 404 errors are expected when user enters wrong code - don't spam console
+      if (response.status !== 404) {
+        console.error('Pairing failed (system error):', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorMessage,
+          url: API_ENDPOINTS.MOBILE_PAIR,
+        });
+      }
+      
+      // Create error without logging for 404s (user input errors)
+      const pairingError = new Error(errorMessage);
+      // Mark as user input error to prevent React Native from logging it
+      (pairingError as any).isUserInputError = response.status === 404;
+      throw pairingError;
     }
 
     return response.json();
   } catch (error) {
+    // Re-throw user input errors without modification
+    if (error instanceof Error && (error as any).isUserInputError) {
+      throw error;
+    }
+    
     // Handle network errors
     if (error instanceof TypeError && error.message.includes('fetch')) {
       console.error('Network error during pairing:', {
