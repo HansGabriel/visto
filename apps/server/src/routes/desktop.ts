@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ConvexHttpClient } from "convex/browser";
 import { analyzeWithLLM } from "../services/llm";
+import { setScreenshotCache, deleteScreenshotCache } from "../services/screenshotCache";
 
 // Lazy initialization - create client when needed
 function getConvexClient(): ConvexHttpClient {
@@ -309,6 +310,7 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
         const buffer = await data.toBuffer();
         const fileSizeKB = Math.round(buffer.length / 1024);
         const base64 = buffer.toString("base64");
+        const base64Url = `data:image/png;base64,${base64}`;
         
         fastify.log.info({ 
           desktopId, 
@@ -326,8 +328,10 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
             
             // Convert base64 to Buffer, then to Blob (Node.js 18+ has Blob)
             const fileBuffer = Buffer.from(base64, "base64");
+            // @ts-ignore - Buffer works with Blob in Node.js 18+
             const fileBlob = new Blob([fileBuffer], { type: "image/png" });
             
+            // @ts-ignore - FormData.append accepts Blob with filename in Node.js
             formData.append("file", fileBlob, "screenshot.png");
             formData.append("contentType", "image/png");
             
@@ -378,10 +382,16 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
             )[0];
           
           if (screenshotRequest) {
+            // Store base64 URL in cache immediately for instant preview
+            // Convert Convex ID to string for cache key
+            const requestIdString = String(screenshotRequest._id);
+            setScreenshotCache(requestIdString, base64Url);
+            fastify.log.info({ desktopId, requestId: requestIdString }, "📸 Screenshot base64 URL cached for instant preview");
+            
             await convexClient.mutation("functions/pendingRequests:markAsProcessed" as any, {
               requestId: screenshotRequest._id,
             });
-            fastify.log.info({ desktopId, requestId: screenshotRequest._id }, "📸 Pending request marked as processed");
+            fastify.log.info({ desktopId, requestId: requestIdString }, "📸 Pending request marked as processed");
           }
         } catch (markError: unknown) {
           fastify.log.warn({ desktopId, err: markError }, "Failed to mark pending request as processed");
@@ -561,8 +571,10 @@ Provide a detailed analysis of what happens in this video, ensuring you capture 
             // Convert base64 to Buffer, then to Blob (Node.js 18+ has Blob)
             const fileBuffer = Buffer.from(base64, "base64");
             const extension = videoMimeType.includes("webm") ? "webm" : "mp4";
+            // @ts-ignore - Buffer works with Blob in Node.js 18+
             const fileBlob = new Blob([fileBuffer], { type: videoMimeType });
             
+            // @ts-ignore - FormData.append accepts Blob with filename in Node.js
             formData.append("file", fileBlob, `video.${extension}`);
             formData.append("contentType", videoMimeType);
             
