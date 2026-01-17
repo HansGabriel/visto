@@ -34,6 +34,23 @@ export async function registerDesktop(): Promise<RegisterDesktopResponse> {
   }
 }
 
+// Get session by desktopId (fallback if sessionId not in registration response)
+export async function getSessionByDesktopId(desktopId: string): Promise<{ sessionId: string; mobileConnected: boolean }> {
+  const response = await fetch(API_ENDPOINTS.DESKTOP_SESSION(desktopId), {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to get session' }))
+    throw new Error(error.error || `Failed to get session: ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
 // Get pending requests for desktop
 export async function getPendingRequests(desktopId: string): Promise<PendingRequestsResponse> {
   const response = await fetch(API_ENDPOINTS.DESKTOP_PENDING_REQUESTS(desktopId), {

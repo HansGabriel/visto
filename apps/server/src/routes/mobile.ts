@@ -3,10 +3,27 @@ import { ConvexHttpClient } from "convex/browser";
 
 // Lazy initialization - create client when needed
 function getConvexClient() {
-  const url = process.env.CONVEX_URL || process.env.CONVEX_DEPLOYMENT_URL;
+  // Check multiple possible env var names (Convex uses different names)
+  let url = process.env.CONVEX_URL 
+    || process.env.CONVEX_DEPLOYMENT_URL 
+    || process.env.CONVEX_DEPLOYMENT;
+    
   if (!url) {
-    throw new Error("CONVEX_URL or CONVEX_DEPLOYMENT_URL must be set");
+    throw new Error("CONVEX_URL, CONVEX_DEPLOYMENT_URL, or CONVEX_DEPLOYMENT must be set");
   }
+  
+  // Convert dev:project-name format to full URL
+  // Convex dev format: dev:project-name -> https://project-name.convex.cloud
+  if (url.startsWith("dev:")) {
+    const projectName = url.replace("dev:", "");
+    url = `https://${projectName}.convex.cloud`;
+  }
+  
+  // Validate URL format before creating client
+  if (!url.startsWith("https://") && !url.startsWith("http://")) {
+    throw new Error(`Invalid Convex URL format: "${url}". Must start with "https://" or "http://"`);
+  }
+  
   return new ConvexHttpClient(url);
 }
 
@@ -29,7 +46,7 @@ export default async function mobileRoutes(fastify: FastifyInstance): Promise<vo
 
         // Find session by pairing code in Convex
         const convexClient = getConvexClient();
-        const session = await convexClient.query("sessions:findByPairingCode" as any, {
+        const session = await convexClient.query("functions/sessions:findByPairingCode" as any, {
           pairingCode,
         });
 
@@ -40,7 +57,7 @@ export default async function mobileRoutes(fastify: FastifyInstance): Promise<vo
         const sessionId = session._id;
 
         // Update session to mark as connected
-        await convexClient.mutation("sessions:updateMobileConnected" as any, {
+        await convexClient.mutation("functions/sessions:updateMobileConnected" as any, {
           sessionId,
           mobileConnected: true,
         });
@@ -73,7 +90,7 @@ export default async function mobileRoutes(fastify: FastifyInstance): Promise<vo
 
         // Get desktop ID from session
         const convexClient = getConvexClient();
-        const session = await convexClient.query("sessions:getById" as any, {
+        const session = await convexClient.query("functions/sessions:getById" as any, {
           sessionId: sessionId as any,
         });
 
@@ -84,7 +101,7 @@ export default async function mobileRoutes(fastify: FastifyInstance): Promise<vo
         const desktopId = session.desktopId;
 
         // Create pending request
-        await convexClient.mutation("pendingRequests:create" as any, {
+        await convexClient.mutation("functions/pendingRequests:create" as any, {
           desktopId,
           requestType: "start-recording",
           processed: false,
@@ -120,7 +137,7 @@ export default async function mobileRoutes(fastify: FastifyInstance): Promise<vo
 
         // Get desktop ID from session
         const convexClient = getConvexClient();
-        const session = await convexClient.query("sessions:getById" as any, {
+        const session = await convexClient.query("functions/sessions:getById" as any, {
           sessionId: sessionId as any,
         });
 
@@ -131,7 +148,7 @@ export default async function mobileRoutes(fastify: FastifyInstance): Promise<vo
         const desktopId = session.desktopId;
 
         // Create pending request
-        await convexClient.mutation("pendingRequests:create" as any, {
+        await convexClient.mutation("functions/pendingRequests:create" as any, {
           desktopId,
           requestType: "stop-recording",
           processed: false,

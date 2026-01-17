@@ -10,7 +10,6 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@clerk/fastify": "^2.6.15",
     "@fastify/cors": "^11.2.0",
     "@fastify/multipart": "^9.3.0",
     "@google/genai": "^1.37.0",

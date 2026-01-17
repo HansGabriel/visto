@@ -35,3 +35,15 @@ export const getByDesktop = query({
       .collect();
   },
 });
+
+// Mark pending request as processed
+export const markAsProcessed = mutation({
+  args: {
+    requestId: v.id("pendingRequests"),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.requestId, {
+      processed: true,
+    });
+  },
+});

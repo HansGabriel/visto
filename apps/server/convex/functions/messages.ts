@@ -29,10 +29,11 @@ export const create = mutation({
 export const getBySession = query({
   args: { sessionId: v.id("sessions") },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const messages = await ctx.db
       .query("messages")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
-      .order("desc")
       .collect();
+    // Sort by createdAt in ascending order (oldest first, newest last)
+    return messages.sort((a, b) => a.createdAt - b.createdAt);
   },
 });

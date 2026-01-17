@@ -11,21 +11,24 @@ let win = null;
 let tray = null;
 function createWindow() {
   win = new BrowserWindow({
-    width: 600,
-    height: 400,
+    width: 1280,
+    height: 720,
+    minWidth: 375,
+    // Mobile minimum width
+    minHeight: 667,
+    // Mobile minimum height
     icon: path.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
     frame: true,
-    // Changed to true so you can see the window controls
     show: true,
-    // Changed to true so window appears automatically
     skipTaskbar: false,
-    // Changed to false so it appears in taskbar/dock
+    backgroundColor: "#000000",
+    // Match dark theme
     webPreferences: {
       preload: path.join(__dirname$1, "preload.mjs"),
       contextIsolation: true,
       // Mandatory
-      sandbox: false,
-      // Disabled to allow network requests to localhost
+      sandbox: true,
+      // Strongly recommended - CSP handles localhost connections
       webSecurity: true
       // Keep web security enabled
     }

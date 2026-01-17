@@ -6,17 +6,12 @@ export default defineSchema({
     desktopId: v.string(),
     mobileConnected: v.boolean(),
     pairingCode: v.string(),
-    // Clerk user ID - links session to authenticated user
-    // Optional: sessions can exist without auth (pairing-based)
-    // If userId is present, user can access session across devices
-    userId: v.optional(v.string()), // Clerk user ID from request.auth.userId
     createdAt: v.number(),
     // Note: Model selection removed - using Gemini Flash as default
     // Can be configured in backend service if needed to switch models later
   })
     .index("by_pairing_code", ["pairingCode"])
-    .index("by_desktop_id", ["desktopId"])
-    .index("by_user", ["userId"]), // Index for querying user's sessions
+    .index("by_desktop_id", ["desktopId"]),
 
   messages: defineTable({
     sessionId: v.id("sessions"),
