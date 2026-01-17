@@ -1,6 +1,5 @@
 import "dotenv/config";
 import Fastify, { FastifyInstance } from "fastify";
-import { registerClerk } from "./plugins/clerk";
 import desktopRoutes from "./routes/desktop";
 import mobileRoutes from "./routes/mobile";
 import chatRoutes from "./routes/chat";
@@ -109,11 +108,6 @@ const start = async (): Promise<void> => {
         fileSize: 50 * 1024 * 1024, // 50MB max file size
       },
     });
-
-    // Register Clerk plugin (optional - will work without it)
-    if (process.env.CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY) {
-      await fastify.register(registerClerk);
-    }
 
     // Register routes
     await fastify.register(desktopRoutes);

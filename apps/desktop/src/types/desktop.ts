@@ -3,6 +3,7 @@
 export interface RegisterDesktopResponse {
   desktopId: string
   pairingCode: string
+  sessionId?: string // Optional since Convex might be unavailable
 }
 
 export interface PendingRequest {

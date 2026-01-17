@@ -7,7 +7,6 @@ export const create = mutation({
     desktopId: v.string(),
     pairingCode: v.string(),
     mobileConnected: v.boolean(),
-    userId: v.optional(v.string()),
     createdAt: v.number(),
   },
   handler: async (ctx, args) => {
@@ -15,7 +14,6 @@ export const create = mutation({
       desktopId: args.desktopId,
       pairingCode: args.pairingCode,
       mobileConnected: args.mobileConnected,
-      userId: args.userId,
       createdAt: args.createdAt,
     });
   },
@@ -39,6 +37,19 @@ export const getById = query({
   args: { sessionId: v.id("sessions") },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.sessionId);
+  },
+});
+
+// Get session by desktop ID
+export const getByDesktopId = query({
+  args: { desktopId: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("sessions")
+      .withIndex("by_desktop_id", (q) =>
+        q.eq("desktopId", args.desktopId)
+      )
+      .first();
   },
 });
 

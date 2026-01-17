@@ -160,6 +160,113 @@ IMPORTANT: When analyzing this video, ensure you:
   }
 }
 
+// Handle text-only chat messages (no media)
+export async function chatWithLLM(
+  userMessage: string,
+  model?: string,
+  logger?: { info: (obj: unknown, msg: string) => void; error: (obj: unknown, msg: string) => void }
+): Promise<string> {
+  const modelName = model || DEFAULT_MODEL;
+  
+  if (logger) {
+    logger.info({ model: modelName, messageLength: userMessage.length }, `💬 Calling Gemini ${modelName} for text chat`);
+  }
+
+  const startTime = Date.now();
+
+  try {
+    // Generate content with text only (no media)
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: [
+        { text: userMessage },
+      ],
+    });
+
+    const responseText = response.text || "";
+    const duration = Date.now() - startTime;
+
+    if (logger) {
+      logger.info({ model: modelName, duration, responseLength: responseText.length }, `💬 Gemini ${modelName} chat response received`);
+    }
+
+    return responseText;
+  } catch (error: unknown) {
+    const duration = Date.now() - startTime;
+    
+    if (error instanceof Error) {
+      const errorDetails: Record<string, unknown> = {
+        model: modelName,
+        duration,
+        message: error.message,
+      };
+      
+      if ('status' in error) {
+        errorDetails.status = (error as { status?: number }).status;
+      }
+      if ('statusText' in error) {
+        errorDetails.statusText = (error as { statusText?: string }).statusText;
+      }
+      
+      if (logger) {
+        logger.error(errorDetails, `💬 Gemini ${modelName} chat error`);
+      }
+      
+      // Try fallback models if model not found
+      if (error.message.includes('404') || error.message.includes('not found')) {
+        const fallbackModels = [
+          "gemini-2.0-flash",
+          "gemini-3-flash-preview",
+          "gemini-2.5-pro",
+          "gemini-1.5-flash",
+        ];
+        
+        if (logger) {
+          logger.info({ originalModel: modelName, fallbacks: fallbackModels }, `💬 Trying fallback models for ${modelName}`);
+        }
+        
+        for (const fallbackModel of fallbackModels) {
+          if (fallbackModel === modelName) continue;
+          
+          try {
+            if (logger) {
+              logger.info({ fallbackModel }, `💬 Trying fallback model: ${fallbackModel}`);
+            }
+            
+            const fallbackResponse = await ai.models.generateContent({
+              model: fallbackModel,
+              contents: [
+                { text: userMessage },
+              ],
+            });
+            
+            const fallbackResponseText = fallbackResponse.text || "";
+            const totalDuration = Date.now() - startTime;
+            
+            if (logger) {
+              logger.info({ model: fallbackModel, duration: totalDuration, responseLength: fallbackResponseText.length }, `💬 Gemini ${fallbackModel} chat response received (fallback)`);
+            }
+            
+            return fallbackResponseText;
+          } catch (fallbackError: unknown) {
+            if (logger) {
+              logger.info({ fallbackModel, err: fallbackError }, `💬 Fallback model ${fallbackModel} also failed`);
+            }
+          }
+        }
+        
+        throw new Error(`Gemini model "${modelName}" and all fallback models failed. Please check your API key has access to Gemini models. Error: ${error.message}`);
+      }
+    } else {
+      if (logger) {
+        logger.error({ model: modelName, duration, err: error }, `💬 Gemini ${modelName} chat error`);
+      }
+    }
+    
+    throw error;
+  }
+}
+
 // Optional: Helper function to switch models if needed later
 // Can be called from routes with model parameter if model selection is added back
 export async function analyzeWithGeminiPro(

@@ -4,10 +4,27 @@ import { analyzeWithLLM } from "../services/llm";
 
 // Lazy initialization - create client when needed
 function getConvexClient(): ConvexHttpClient {
-  const url = process.env.CONVEX_URL || process.env.CONVEX_DEPLOYMENT_URL;
+  // Check multiple possible env var names (Convex uses different names)
+  let url = process.env.CONVEX_URL 
+    || process.env.CONVEX_DEPLOYMENT_URL 
+    || process.env.CONVEX_DEPLOYMENT;
+    
   if (!url) {
-    throw new Error("CONVEX_URL or CONVEX_DEPLOYMENT_URL must be set");
+    throw new Error("CONVEX_URL, CONVEX_DEPLOYMENT_URL, or CONVEX_DEPLOYMENT must be set");
   }
+  
+  // Convert dev:project-name format to full URL
+  // Convex dev format: dev:project-name -> https://project-name.convex.cloud
+  if (url.startsWith("dev:")) {
+    const projectName = url.replace("dev:", "");
+    url = `https://${projectName}.convex.cloud`;
+  }
+  
+  // Validate URL format before creating client
+  if (!url.startsWith("https://") && !url.startsWith("http://")) {
+    throw new Error(`Invalid Convex URL format: "${url}". Must start with "https://" or "http://"`);
+  }
+  
   return new ConvexHttpClient(url);
 }
 
@@ -92,13 +109,13 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
         const pairingCode = generatePairingCode();
 
         // Create session in Convex (optional - will work without it)
+        let sessionId: string | undefined;
         try {
           const convexClient = getConvexClient();
-          await convexClient.mutation("sessions:create" as any, {
+          sessionId = await convexClient.mutation("functions/sessions:create" as any, {
             desktopId,
             pairingCode,
             mobileConnected: false,
-            userId: undefined,
             createdAt: Date.now(),
           });
         } catch (convexError: unknown) {
@@ -106,11 +123,46 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
           fastify.log.warn({ err: convexError }, "Convex unavailable, continuing without storage");
         }
 
-        fastify.log.info({ desktopId, pairingCode }, "Desktop registered");
-        return { desktopId, pairingCode };
+        fastify.log.info({ desktopId, pairingCode, sessionId }, "Desktop registered");
+        return { desktopId, pairingCode, sessionId };
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         fastify.log.error({ err: error }, "Failed to register desktop");
+        reply.code(500).send({ error: errorMessage });
+      }
+    }
+  );
+
+  // Get session by desktopId
+  fastify.get(
+    "/api/desktop/:desktopId/session",
+    async (
+      request: FastifyRequest<{ Params: { desktopId: string } }>,
+      reply: FastifyReply
+    ) => {
+      try {
+        const { desktopId } = request.params;
+
+        const convexClient = getConvexClient();
+        const session = await convexClient.query("functions/sessions:getByDesktopId" as any, {
+          desktopId,
+        });
+
+        if (!session) {
+          return reply.code(404).send({ error: "Session not found" });
+        }
+
+        fastify.log.info({ desktopId, sessionId: session._id }, "Session retrieved");
+        return { 
+          sessionId: session._id, 
+          mobileConnected: session.mobileConnected 
+        };
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        fastify.log.error(
+          { desktopId: request.params.desktopId, err: error },
+          "Failed to get session"
+        );
         reply.code(500).send({ error: errorMessage });
       }
     }
@@ -129,7 +181,7 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
         try {
           const convexClient = getConvexClient();
           const pendingRequests = await convexClient.query(
-            "pendingRequests:getByDesktop" as any,
+            "functions/pendingRequests:getByDesktop" as any,
             { desktopId }
           );
 
@@ -187,8 +239,40 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
         }
 
         // Extract query from fields (fields that came before the file)
-        const userQuery = extractQueryFromFields(data.fields) || 
-          "Describe what you see in this screenshot in detail.";
+        let userQuery = extractQueryFromFields(data.fields);
+        
+        // If no query provided, try to get it from the most recent chat message
+        if (!userQuery) {
+          try {
+            const convexClient = getConvexClient();
+            const session = await convexClient.query("functions/sessions:getByDesktopId" as any, {
+              desktopId,
+            });
+
+            if (session) {
+              const messages = await convexClient.query("functions/messages:getBySession" as any, {
+                sessionId: session._id,
+              });
+
+              // Find the most recent user message
+              const recentUserMessage = (messages || [])
+                .filter((msg: { role: string }) => msg.role === "user")
+                .sort((a: { createdAt: number }, b: { createdAt: number }) => 
+                  b.createdAt - a.createdAt
+                )[0];
+
+              if (recentUserMessage?.content) {
+                userQuery = recentUserMessage.content;
+                fastify.log.info({ desktopId }, "📸 Using query from recent chat message");
+              }
+            }
+          } catch (error: unknown) {
+            fastify.log.warn({ desktopId, err: error }, "Failed to get query from chat messages");
+          }
+        }
+        
+        // Fallback to default query
+        userQuery = userQuery || "Describe what you see in this screenshot in detail.";
 
         const buffer = await data.toBuffer();
         const fileSizeKB = Math.round(buffer.length / 1024);
@@ -201,14 +285,107 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
           queryLength: userQuery.length 
         }, "📸 Screenshot processed successfully");
 
+        // Mark pending request as processed FIRST (before LLM, so we don't retry on LLM failure)
+        try {
+          const convexClient = getConvexClient();
+          
+          // Get the most recent unprocessed screenshot request
+          const pendingRequests = await convexClient.query("functions/pendingRequests:getByDesktop" as any, {
+            desktopId,
+          });
+          
+          // Find the most recent screenshot request that's not processed
+          const screenshotRequest = (pendingRequests || [])
+            .filter((req: { requestType: string }) => req.requestType === "screenshot")
+            .sort((a: { createdAt: number }, b: { createdAt: number }) => 
+              b.createdAt - a.createdAt
+            )[0];
+          
+          if (screenshotRequest) {
+            await convexClient.mutation("functions/pendingRequests:markAsProcessed" as any, {
+              requestId: screenshotRequest._id,
+            });
+            fastify.log.info({ desktopId, requestId: screenshotRequest._id }, "📸 Pending request marked as processed");
+          }
+        } catch (markError: unknown) {
+          fastify.log.warn({ desktopId, err: markError }, "Failed to mark pending request as processed");
+        }
+
         // Analyze screenshot with LLM
         let aiResponse: string | undefined;
         try {
+          fastify.log.info({ desktopId, queryLength: userQuery.length }, "📸 Starting LLM analysis");
           aiResponse = await analyzeWithLLM(base64, "image", userQuery, undefined, fastify.log);
-          fastify.log.info({ desktopId, responseLength: aiResponse.length }, "📸 Screenshot analysis complete");
+          fastify.log.info({ desktopId, responseLength: aiResponse?.length || 0 }, "📸 Screenshot analysis complete");
         } catch (error: unknown) {
-          fastify.log.error({ desktopId, err: error }, "Failed to analyze screenshot with LLM");
-          // Continue even if LLM fails
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          fastify.log.error({ desktopId, err: error, errorMessage }, "❌ Failed to analyze screenshot with LLM");
+          // Set a fallback response so user knows something happened
+          aiResponse = `I received your screenshot but encountered an error analyzing it: ${errorMessage}. Please try again.`;
+        }
+
+        // Create assistant message in chat (always create one, even if LLM failed)
+        if (aiResponse) {
+          try {
+            const convexClient = getConvexClient();
+            // Get session by desktopId
+            const session = await convexClient.query("functions/sessions:getByDesktopId" as any, {
+              desktopId,
+            });
+
+            if (session) {
+              // Find the most recent user message without an assistant response
+              const messages = await convexClient.query("functions/messages:getBySession" as any, {
+                sessionId: session._id,
+              });
+
+              // Find the most recent user message that requested screenshot
+              const recentUserMessage = (messages || [])
+                .filter((msg: { role: string; mediaType: string | null }) => 
+                  msg.role === "user" && !msg.mediaType
+                )
+                .sort((a: { createdAt: number }, b: { createdAt: number }) => 
+                  b.createdAt - a.createdAt
+                )[0];
+
+              // Check if there's already an assistant response for this message
+              if (recentUserMessage) {
+                const hasResponse = (messages || []).some(
+                  (msg: { role: string; createdAt: number }) =>
+                    msg.role === "assistant" && msg.createdAt > recentUserMessage.createdAt
+                );
+
+                if (!hasResponse) {
+                  // Create assistant message with screenshot reference
+                  // Note: We don't store the full base64 image (too large for Convex 1MB limit)
+                  // The screenshot is already available via the upload response if needed
+                  await convexClient.mutation("functions/messages:create" as any, {
+                    sessionId: session._id,
+                    role: "assistant",
+                    content: aiResponse,
+                    mediaType: "screenshot",
+                    // Don't store full base64 - it exceeds Convex 1MB limit
+                    // The screenshot is available from the upload response if needed
+                    mediaUrl: undefined,
+                    createdAt: Date.now(),
+                  });
+                  fastify.log.info({ desktopId, sessionId: session._id, responseLength: aiResponse.length }, "✅ Assistant message created in chat");
+                } else {
+                  fastify.log.info({ desktopId }, "📸 Assistant response already exists for this message");
+                }
+              } else {
+                fastify.log.warn({ desktopId }, "📸 No recent user message found to link assistant response");
+              }
+            } else {
+              fastify.log.warn({ desktopId }, "📸 No session found for desktopId");
+            }
+          } catch (chatError: unknown) {
+            const errorMessage = chatError instanceof Error ? chatError.message : "Unknown error";
+            fastify.log.error({ desktopId, err: chatError, errorMessage }, "❌ Failed to create chat message for screenshot");
+            // Don't fail the upload - screenshot was processed successfully
+          }
+        } else {
+          fastify.log.warn({ desktopId }, "📸 No AI response to create message with");
         }
 
         return {

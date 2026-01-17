@@ -7,9 +7,9 @@
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
+  color-scheme: dark;
   color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  background-color: #000000;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -28,10 +28,9 @@ a:hover {
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
   min-height: 100vh;
+  background: #000000;
 }
 
 h1 {
@@ -58,15 +57,79 @@ button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+/* Cosmic background utilities */
+@layer utilities {
+  .bg-cosmic {
+    background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
+    position: relative;
+    overflow: hidden;
   }
-  a:hover {
-    color: #747bff;
+
+  .bg-cosmic::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: 
+      radial-gradient(2px 2px at 20px 30px, rgba(255, 255, 255, 0.3), transparent),
+      radial-gradient(2px 2px at 60px 70px, rgba(255, 255, 255, 0.2), transparent),
+      radial-gradient(1px 1px at 50px 50px, rgba(255, 255, 255, 0.4), transparent),
+      radial-gradient(1px 1px at 90px 40px, rgba(255, 255, 255, 0.3), transparent),
+      radial-gradient(2px 2px at 130px 80px, rgba(255, 255, 255, 0.2), transparent);
+    background-size: 200px 200px;
+    animation: starfield 20s linear infinite;
+    opacity: 0.6;
   }
-  button {
-    background-color: #f9f9f9;
+
+  @keyframes starfield {
+    from {
+      transform: translateY(0);
+    }
+    to {
+      transform: translateY(-200px);
+    }
+  }
+
+  .gradient-purple-blue {
+    background: linear-gradient(135deg, #9333ea 0%, #3b82f6 100%);
+  }
+
+  .gradient-purple-pink {
+    background: linear-gradient(135deg, #9333ea 0%, #ec4899 100%);
+  }
+
+  .gradient-blue-purple {
+    background: linear-gradient(135deg, #3b82f6 0%, #9333ea 100%);
+  }
+
+  .text-gradient-purple-blue {
+    background: linear-gradient(135deg, #9333ea 0%, #3b82f6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .text-gradient-purple-pink {
+    background: linear-gradient(135deg, #9333ea 0%, #ec4899 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .border-gradient-purple-blue {
+    border-image: linear-gradient(135deg, #9333ea 0%, #3b82f6 100%) 1;
+  }
+
+  .glow-purple-blue {
+    box-shadow: 0 0 20px rgba(147, 51, 234, 0.5), 0 0 40px rgba(59, 130, 246, 0.3);
+  }
+}
+
+/* Mobile-responsive utilities */
+@layer utilities {
+  @media (max-width: 640px) {
+    .mobile-max-width {
+      max-width: 375px;
+      margin: 0 auto;
+    }
   }
 }

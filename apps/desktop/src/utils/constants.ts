@@ -5,6 +5,8 @@ export const POLLING_INTERVAL = parseInt(import.meta.env.VITE_POLLING_INTERVAL |
 // API Endpoints
 export const API_ENDPOINTS = {
   DESKTOP_REGISTER: `${API_URL}/api/desktop/register`,
+  DESKTOP_SESSION: (desktopId: string) =>
+    `${API_URL}/api/desktop/${desktopId}/session`,
   DESKTOP_PENDING_REQUESTS: (desktopId: string) =>
     `${API_URL}/api/desktop/${desktopId}/pending-requests`,
   DESKTOP_SCREENSHOT: (desktopId: string) =>

@@ -2,46 +2,28 @@ import { useEffect, useState } from 'react'
 import { useDesktopRegistration } from './hooks/useDesktopRegistration'
 import { useScreenCapture } from './hooks/useScreenCapture'
 import { usePolling } from './hooks/usePolling'
-import { PairingCode } from './components/PairingCode'
-import { StatusIndicator } from './components/StatusIndicator'
-import { RecordingControl } from './components/RecordingControl'
+import { useChat } from './hooks/useChat'
+import { PairingScreen } from './components/PairingScreen'
+import { ConnectedScreen } from './components/ConnectedScreen'
+import { ChatInterface } from './components/ChatInterface'
+
+type ViewState = 'pairing' | 'connected' | 'chat'
 
 function App() {
-  const { desktopId, pairingCode, isLoading, error, regeneratePairingCode } =
+  const { desktopId, pairingCode, sessionId, mobileConnected, isLoading, error, regeneratePairingCode } =
     useDesktopRegistration()
 
   const {
     captureScreenshot,
     startRecording,
     stopRecording,
-    isRecording,
-    isCapturing,
     error: captureError,
-    getRecordingDuration,
   } = useScreenCapture(desktopId)
 
-  const [mobileConnected, setMobileConnected] = useState(false)
-  const [recordingDuration, setRecordingDuration] = useState(0)
-  const [lastScreenshotResponse, setLastScreenshotResponse] = useState<string | null>(null)
-  const [lastScreenshotPreview, setLastScreenshotPreview] = useState<string | null>(null)
-  const [lastVideoResponse, setLastVideoResponse] = useState<string | null>(null)
-  const [lastVideoPreview, setLastVideoPreview] = useState<string | null>(null)
+  const [viewState, setViewState] = useState<ViewState>('pairing')
+  const [manuallyNavigated, setManuallyNavigated] = useState(false)
 
-  // Update recording duration every second when recording
-  useEffect(() => {
-    if (!isRecording) {
-      setRecordingDuration(0)
-      return
-    }
-
-    const interval = setInterval(() => {
-      setRecordingDuration(getRecordingDuration())
-    }, 1000)
-
-    return () => clearInterval(interval)
-  }, [isRecording, getRecordingDuration])
-
-  // Set up polling for pending requests
+  // Set up polling for pending requests (only when mobile is connected)
   usePolling({
     desktopId,
     onScreenshotRequest: async () => {
@@ -51,173 +33,128 @@ function App() {
     onStopRecordingRequest: async () => {
       await stopRecording()
     },
-    enabled: !!desktopId,
+    enabled: !!desktopId && mobileConnected,
   })
 
-  // TODO: Poll for mobile connection status
-  // For now, we'll assume mobile is connected if desktopId exists
+  // Initialize chat
+  const { messages, sendMessage, isLoading: chatLoading, isSending } = useChat(sessionId)
+
+  // Wrapper for sendMessage to match ChatInterface type signature
+  const handleSendMessage = async (message: string, requestScreenshot?: boolean): Promise<void> => {
+    await sendMessage(message, requestScreenshot)
+    // Return value is intentionally ignored to match ChatInterface signature
+  }
+
+  // Handle view state transitions based on mobile connection status
   useEffect(() => {
-    setMobileConnected(!!desktopId && !!pairingCode)
-  }, [desktopId, pairingCode])
-
-  const handleTestScreenshot = async (query?: string) => {
-    try {
-      setLastScreenshotResponse(null)
-      setLastScreenshotPreview(null)
-      const result = await captureScreenshot(query)
-      if (result.analysis) {
-        setLastScreenshotResponse(result.analysis)
-      }
-      if (result.previewUrl) {
-        setLastScreenshotPreview(result.previewUrl)
-      }
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      console.error('Test screenshot failed:', errorMessage)
-      setLastScreenshotResponse(null)
-      setLastScreenshotPreview(null)
+    if (isLoading) {
+      return
     }
-  }
 
-  const handleStartRecording = async () => {
-    try {
-      await startRecording()
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      console.error('Start recording failed:', errorMessage)
+    // Only auto-transition if user hasn't manually navigated
+    if (manuallyNavigated) {
+      return
     }
-  }
 
-  const handleStopRecording = async (query?: string) => {
-    try {
-      // Clean up previous video preview URL
-      if (lastVideoPreview) {
-        URL.revokeObjectURL(lastVideoPreview)
-      }
-      setLastVideoResponse(null)
-      setLastVideoPreview(null)
-      const result = await stopRecording(query)
-      if (result.analysis) {
-        setLastVideoResponse(result.analysis)
-      }
-      if (result.previewUrl) {
-        setLastVideoPreview(result.previewUrl)
-      }
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      console.error('Stop recording failed:', errorMessage)
-      setLastVideoResponse(null)
-      setLastVideoPreview(null)
+    if (mobileConnected && viewState === 'pairing') {
+      // Transition to connected screen when mobile connects
+      setViewState('connected')
+    } else if (!mobileConnected && pairingCode && viewState !== 'pairing') {
+      // Only reset to pairing if we're not already there and not manually navigated
+      setViewState('pairing')
     }
-  }
+  }, [mobileConnected, isLoading, pairingCode, viewState, manuallyNavigated])
 
-  // Cleanup video preview URL on unmount
+  // Development mode: Allow skipping to chat with keyboard shortcut (C key)
   useEffect(() => {
-    return () => {
-      if (lastVideoPreview) {
-        URL.revokeObjectURL(lastVideoPreview)
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // Only in development mode and when on pairing screen
+      if (
+        (import.meta.env.DEV || import.meta.env.VITE_DEV_SERVER_URL) &&
+        viewState === 'pairing' &&
+        sessionId &&
+        (e.key === 'c' || e.key === 'C')
+      ) {
+        e.preventDefault()
+        console.log('🛠️ [Dev] Skipping to chat for testing...')
+        setManuallyNavigated(true)
+        setViewState('chat')
       }
     }
-  }, [lastVideoPreview])
 
+    window.addEventListener('keydown', handleKeyPress)
+    return () => window.removeEventListener('keydown', handleKeyPress)
+  }, [viewState, sessionId])
+
+  // Handle transition from connected to chat
+  const handleConnectedContinue = () => {
+    setManuallyNavigated(true)
+    setViewState('chat')
+  }
+
+  // Handle manual skip to chat from pairing screen
+  const handleSkipToChat = () => {
+    setManuallyNavigated(true)
+    setViewState('chat')
+  }
+
+  // Render based on view state
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/20 to-gray-900">
+        <div className="p-6 bg-red-900/50 border border-red-500 rounded-lg text-red-200 max-w-md">
+          <h2 className="text-xl font-semibold mb-2">Error</h2>
+          <p>{error}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (captureError) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/20 to-gray-900">
+        <div className="p-6 bg-red-900/50 border border-red-500 rounded-lg text-red-200 max-w-md">
+          <h2 className="text-xl font-semibold mb-2">Capture Error</h2>
+          <p>{captureError}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (viewState === 'pairing') {
+    return (
+      <PairingScreen
+        pairingCode={pairingCode}
+        isLoading={isLoading}
+        onRegenerate={regeneratePairingCode}
+        onSkipToChat={handleSkipToChat}
+        sessionId={sessionId}
+      />
+    )
+  }
+
+  if (viewState === 'connected') {
+    return (
+      <ConnectedScreen
+        onContinue={handleConnectedContinue}
+        autoContinue={true}
+        autoContinueDelay={3000}
+      />
+    )
+  }
+
+  // Chat view - full-screen with responsive mobile-like layout
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
-      <div className="max-w-2xl mx-auto space-y-6">
-        <h1 className="text-2xl font-bold text-center mb-6">
-          Desktop AI Assistant
-        </h1>
-
-        {error && (
-          <div className="p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-200">
-            Error: {error}
-          </div>
-        )}
-
-        {captureError && (
-          <div className="p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-200">
-            Capture Error: {captureError}
-          </div>
-        )}
-
-        <PairingCode
-          pairingCode={pairingCode}
-          isLoading={isLoading}
-          onRegenerate={regeneratePairingCode}
+    <div className="flex flex-col min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/20 to-gray-900">
+      {/* Content container with max-width constraint for mobile-like appearance */}
+      <div className="flex-1 flex flex-col max-w-md mx-auto w-full">
+        <ChatInterface
+          messages={messages}
+          onSendMessage={handleSendMessage}
+          isLoading={chatLoading}
+          isSending={isSending}
+          sessionId={sessionId}
         />
-
-        <StatusIndicator
-          mobileConnected={mobileConnected}
-          isRecording={isRecording}
-          recordingDuration={recordingDuration}
-        />
-
-        <RecordingControl
-          onTestScreenshot={handleTestScreenshot}
-          onStartRecording={handleStartRecording}
-          onStopRecording={handleStopRecording}
-          isRecording={isRecording}
-          isCapturing={isCapturing}
-          isDisabled={!desktopId || isLoading}
-        />
-
-        {lastScreenshotResponse && (
-          <div className="p-4 bg-gray-800 rounded-lg border border-gray-700">
-            <h3 className="text-sm font-semibold text-gray-300 mb-3">📸 Screenshot AI Analysis:</h3>
-            {lastScreenshotPreview && (
-              <div className="mb-3 rounded-lg overflow-hidden border border-gray-600">
-                <img 
-                  src={lastScreenshotPreview} 
-                  alt="Screenshot preview" 
-                  className="w-full h-auto max-h-96 object-contain"
-                />
-              </div>
-            )}
-            <p className="text-white whitespace-pre-wrap text-sm leading-relaxed">
-              {lastScreenshotResponse}
-            </p>
-          </div>
-        )}
-
-        {lastVideoResponse && (
-          <div className="p-4 bg-gray-800 rounded-lg border border-gray-700">
-            <h3 className="text-sm font-semibold text-gray-300 mb-3">🎥 Video AI Analysis:</h3>
-            {lastVideoPreview && (
-              <div className="mb-3 rounded-lg overflow-hidden border border-gray-600">
-                <video 
-                  src={lastVideoPreview} 
-                  controls 
-                  className="w-full h-auto max-h-96"
-                  preload="auto"
-                  autoPlay={false}
-                  muted
-                  playsInline
-                  onError={(e) => {
-                    console.error('Video playback error:', e)
-                    const videoEl = e.currentTarget
-                    console.error('Video error details:', {
-                      error: videoEl.error,
-                      src: videoEl.src,
-                      networkState: videoEl.networkState,
-                      readyState: videoEl.readyState
-                    })
-                  }}
-                  onLoadedMetadata={(e) => {
-                    console.log('Video metadata loaded:', {
-                      duration: e.currentTarget.duration,
-                      videoWidth: e.currentTarget.videoWidth,
-                      videoHeight: e.currentTarget.videoHeight
-                    })
-                  }}
-                >
-                  Your browser does not support the video tag.
-                </video>
-              </div>
-            )}
-            <p className="text-white whitespace-pre-wrap text-sm leading-relaxed">
-              {lastVideoResponse}
-            </p>
-          </div>
-        )}
       </div>
     </div>
   )
