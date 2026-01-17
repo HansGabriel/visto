@@ -1,13 +1,12 @@
-"use strict";
-const electron = require("electron");
-electron.contextBridge.exposeInMainWorld("electronAPI", {
+import { contextBridge, ipcRenderer } from "electron";
+contextBridge.exposeInMainWorld("electronAPI", {
   captureScreenshot: () => {
-    return electron.ipcRenderer.invoke("capture-screenshot");
+    return ipcRenderer.invoke("capture-screenshot");
   },
   startRecording: () => {
-    return electron.ipcRenderer.invoke("start-recording");
+    return ipcRenderer.invoke("start-recording");
   },
   stopRecording: () => {
-    return electron.ipcRenderer.invoke("stop-recording");
+    return ipcRenderer.invoke("stop-recording");
   }
 });

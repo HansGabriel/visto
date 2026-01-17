@@ -22,6 +22,7 @@ function App() {
 
   const [mobileConnected, setMobileConnected] = useState(false)
   const [recordingDuration, setRecordingDuration] = useState(0)
+  const [lastScreenshotResponse, setLastScreenshotResponse] = useState<string | null>(null)
 
   // Update recording duration every second when recording
   useEffect(() => {
@@ -52,12 +53,17 @@ function App() {
     setMobileConnected(!!desktopId && !!pairingCode)
   }, [desktopId, pairingCode])
 
-  const handleTestScreenshot = async () => {
+  const handleTestScreenshot = async (query?: string) => {
     try {
-      await captureScreenshot()
+      setLastScreenshotResponse(null)
+      const result = await captureScreenshot(query)
+      if (result.analysis) {
+        setLastScreenshotResponse(result.analysis)
+      }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
       console.error('Test screenshot failed:', errorMessage)
+      setLastScreenshotResponse(null)
     }
   }
 
@@ -118,6 +124,15 @@ function App() {
           isCapturing={isCapturing}
           isDisabled={!desktopId || isLoading}
         />
+
+        {lastScreenshotResponse && (
+          <div className="p-4 bg-gray-800 rounded-lg border border-gray-700">
+            <h3 className="text-sm font-semibold text-gray-300 mb-2">AI Analysis:</h3>
+            <p className="text-white whitespace-pre-wrap text-sm leading-relaxed">
+              {lastScreenshotResponse}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )

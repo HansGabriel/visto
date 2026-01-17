@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { uploadScreenshot, uploadVideo } from '../services/api'
+import type { UploadResponse } from '../types/desktop'
 
 export function useScreenCapture(desktopId: string | null) {
   const [isRecording, setIsRecording] = useState(false)
@@ -14,24 +15,22 @@ export function useScreenCapture(desktopId: string | null) {
   useEffect(() => {
     return () => {
       // Stop recording if still active
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      if (mediaRecorderRef.current?.state !== 'inactive') {
         try {
-          mediaRecorderRef.current.stop()
+          mediaRecorderRef.current?.stop()
         } catch (err) {
           console.error('Error stopping recorder on cleanup:', err)
         }
       }
 
       // Stop all tracks
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop())
-        streamRef.current = null
-      }
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
     }
   }, [])
 
   // Capture screenshot
-  const captureScreenshot = useCallback(async (): Promise<void> => {
+  const captureScreenshot = useCallback(async (query?: string): Promise<UploadResponse> => {
     if (!desktopId) {
       throw new Error('Desktop ID not available')
     }
@@ -45,16 +44,16 @@ export function useScreenCapture(desktopId: string | null) {
       setError(null)
 
       // Get screenshot buffer from main process
-      // Electron IPC serializes Buffer as ArrayBuffer/Uint8Array
       const screenshotBuffer = await window.electronAPI.captureScreenshot()
       
-      // Convert to Blob (Uint8Array works directly with Blob constructor)
+      // Convert to Blob
       const blob = new Blob([screenshotBuffer as BlobPart], { type: 'image/png' })
       
-      // Upload to backend
-      await uploadScreenshot(desktopId, blob)
+      // Upload to backend with query
+      const result = await uploadScreenshot(desktopId, blob, query)
       
       setIsCapturing(false)
+      return result
     } catch (err: unknown) {
       setIsCapturing(false)
       const errorMessage = err instanceof Error ? err.message : 'Failed to capture screenshot'
@@ -93,7 +92,7 @@ export function useScreenCapture(desktopId: string | null) {
             chromeMediaSourceId: streamId,
           },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } as any, // Required for Electron desktop capture
+        } as any,
       })
 
       streamRef.current = stream
@@ -110,18 +109,13 @@ export function useScreenCapture(desktopId: string | null) {
         'video/webm',
       ]
       
-      let selectedMimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type))
-      if (!selectedMimeType) {
-        selectedMimeType = '' // Use default
-      }
+      const selectedMimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type)) || ''
 
       const mediaRecorder = new MediaRecorder(stream, {
         mimeType: selectedMimeType,
       })
 
       mediaRecorderRef.current = mediaRecorder
-
-      // Reset chunks
       recordedChunksRef.current = []
 
       // Capture start time for duration calculation
@@ -144,7 +138,7 @@ export function useScreenCapture(desktopId: string | null) {
           // Create blob from chunks
           const videoBlob = new Blob(recordedChunksRef.current, { type: blobMimeType })
           
-          // Calculate duration using the captured start time
+          // Calculate duration
           const duration = Math.floor((Date.now() - startTime) / 1000)
 
           // Upload to backend
@@ -183,7 +177,6 @@ export function useScreenCapture(desktopId: string | null) {
     }
 
     try {
-      // Notify main process (for consistency, even though it just returns success)
       await window.electronAPI.stopRecording()
 
       const mediaRecorder = mediaRecorderRef.current

@@ -7,19 +7,31 @@ import type {
 
 // Register desktop and get pairing code
 export async function registerDesktop(): Promise<RegisterDesktopResponse> {
-  const response = await fetch(API_ENDPOINTS.DESKTOP_REGISTER, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  })
+  try {
+    const response = await fetch(API_ENDPOINTS.DESKTOP_REGISTER, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Registration failed' }))
-    throw new Error(error.error || `Registration failed: ${response.statusText}`)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Registration failed' }))
+      throw new Error(error.error || `Registration failed: ${response.statusText}`)
+    }
+
+    return response.json()
+  } catch (err) {
+    // Handle network errors
+    if (err instanceof TypeError && err.message.includes('fetch')) {
+      throw new Error(`Failed to connect to server at ${API_ENDPOINTS.DESKTOP_REGISTER}. Make sure the server is running.`)
+    }
+    // Re-throw if it's already an Error
+    if (err instanceof Error) {
+      throw err
+    }
+    throw new Error(`Unknown error: ${String(err)}`)
   }
-
-  return response.json()
 }
 
 // Get pending requests for desktop
@@ -42,7 +54,8 @@ export async function getPendingRequests(desktopId: string): Promise<PendingRequ
 // Upload screenshot to backend
 export async function uploadScreenshot(
   desktopId: string,
-  screenshotBuffer: Uint8Array | Blob
+  screenshotBuffer: Uint8Array | Blob,
+  query?: string
 ): Promise<UploadResponse> {
   const formData = new FormData()
   
@@ -51,6 +64,12 @@ export async function uploadScreenshot(
     ? screenshotBuffer
     : new Blob([screenshotBuffer as BlobPart], { type: 'image/png' })
 
+  // IMPORTANT: Add query BEFORE the file so server can read it with request.file()
+  if (query?.trim()) {
+    formData.append('query', query.trim())
+  }
+  
+  // Add file AFTER query field
   formData.append('screenshot', blob, 'screenshot.png')
 
   const response = await fetch(API_ENDPOINTS.DESKTOP_SCREENSHOT(desktopId), {
@@ -73,8 +92,10 @@ export async function uploadVideo(
   duration: number
 ): Promise<UploadResponse> {
   const formData = new FormData()
-  formData.append('video', videoBlob, 'recording.webm')
+  // IMPORTANT: Add duration BEFORE the file so server can read it with request.file()
   formData.append('duration', duration.toString())
+  // Add file AFTER duration field
+  formData.append('video', videoBlob, 'recording.webm')
 
   const response = await fetch(API_ENDPOINTS.DESKTOP_VIDEO(desktopId), {
     method: 'POST',

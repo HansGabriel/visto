@@ -13,7 +13,7 @@
     "@clerk/fastify": "^2.6.15",
     "@fastify/cors": "^11.2.0",
     "@fastify/multipart": "^9.3.0",
-    "@google/generative-ai": "^0.24.1",
+    "@google/genai": "^1.37.0",
     "convex": "^1.31.5",
     "dotenv": "^16.0.3",
     "fastify": "^5.7.1",

@@ -36,7 +36,8 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       contextIsolation: true, // Mandatory
-      sandbox: true, // Strongly recommended
+      sandbox: false, // Disabled to allow network requests to localhost
+      webSecurity: true, // Keep web security enabled
     },
   })
 
@@ -49,6 +50,10 @@ function createWindow() {
   // Show window when ready
   win.once('ready-to-show', () => {
     win?.show()
+    // Open DevTools in development mode
+    if (process.env.NODE_ENV === 'development' || VITE_DEV_SERVER_URL) {
+      win?.webContents.openDevTools()
+    }
   })
 
   // Hide window when closed instead of quitting
@@ -111,24 +116,54 @@ function createTray() {
 // IPC Handlers using ipcMain.handle() pattern
 ipcMain.handle('capture-screenshot', async () => {
   try {
+    console.log('📸 [Main] Starting screenshot capture...')
     const primaryDisplay = screen.getPrimaryDisplay()
+    console.log('📸 [Main] Primary display size:', primaryDisplay.size)
+    
+    console.log('📸 [Main] Requesting screen sources...')
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
       thumbnailSize: primaryDisplay.size,
     })
     
+    console.log('📸 [Main] Screen sources found:', sources.length)
+    
     if (sources.length === 0) {
-      throw new Error('No screen sources available')
+      const errorMsg = 'No screen sources available. Please grant screen recording permissions in System Settings > Privacy & Security > Screen Recording, then restart the app.'
+      console.error('📸 [Main]', errorMsg)
+      throw new Error(errorMsg)
     }
     
     // Get PNG buffer - Electron serializes Buffer through IPC as ArrayBuffer
     // We convert to Uint8Array to match renderer type expectations
+    console.log('📸 [Main] Converting screenshot to PNG buffer...')
     const buffer = sources[0].thumbnail.toPNG()
+    console.log('📸 [Main] Screenshot buffer size:', buffer.length, 'bytes')
+    
     // Buffer extends Uint8Array, but for explicit typing we create a new Uint8Array
-    return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+    const uint8Array = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+    console.log('📸 [Main] Screenshot capture successful, returning to renderer')
+    return uint8Array
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.error('Screenshot capture error:', error)
+    // Better error message extraction - preserve original error message
+    let errorMessage = 'Unknown error'
+    if (error instanceof Error) {
+      // Use the actual error message, not "Unknown error"
+      errorMessage = error.message || 'Unknown error occurred'
+      console.error('📸 [Main] Screenshot capture error:', errorMessage)
+      if (error.stack) {
+        console.error('📸 [Main] Error stack:', error.stack)
+      }
+    } else {
+      errorMessage = String(error)
+      console.error('📸 [Main] Screenshot capture error (non-Error):', error)
+    }
+    
+    // If it's a "Failed to get sources" error, provide helpful message
+    if (errorMessage.includes('Failed to get sources') || errorMessage.includes('get sources')) {
+      throw new Error('Screen recording permission denied. Please grant screen recording permissions in System Settings > Privacy & Security > Screen Recording, then restart the app.')
+    }
+    
     throw new Error(`Failed to capture screenshot: ${errorMessage}`)
   }
 })

@@ -20,6 +20,7 @@ export interface UploadResponse {
   screenshotUrl?: string
   videoUrl?: string
   duration?: number
+  analysis?: string
 }
 
 export interface DesktopSession {
