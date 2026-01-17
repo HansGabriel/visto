@@ -35,7 +35,11 @@ export function useChat(sessionIdOrOptions: string | null | UseChatOptions) {
 
     try {
       const response = await getMessages(sessionId);
-      setMessages(response.messages);
+      // Deduplicate messages by messageId to prevent duplicate keys
+      const uniqueMessages = response.messages.filter((msg, index, self) =>
+        index === self.findIndex((m) => m.messageId === msg.messageId)
+      );
+      setMessages(uniqueMessages);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load messages';
       setError(errorMessage);
@@ -64,7 +68,12 @@ export function useChat(sessionIdOrOptions: string | null | UseChatOptions) {
       );
 
       if (newMessages && newMessages.length > 0) {
-        setMessages((prev) => [...prev, ...newMessages]);
+        setMessages((prev) => {
+          // Deduplicate: only add messages that don't already exist
+          const existingIds = new Set(prev.map((m) => m.messageId));
+          const uniqueNewMessages = newMessages.filter((msg) => !existingIds.has(msg.messageId));
+          return [...prev, ...uniqueNewMessages];
+        });
       }
     }, pollingInterval);
 
@@ -100,10 +109,19 @@ export function useChat(sessionIdOrOptions: string | null | UseChatOptions) {
         const request: SendMessageRequest = {
           message: content.trim() || (requestScreenshot ? 'Screenshot request' : screenshotUrl ? 'Screenshot' : videoUrl ? 'Video recording' : ''),
           requestScreenshot,
-          screenshotUrl,
-          videoUrl,
-          storageId,
+          screenshotUrl: screenshotUrl || undefined, // Ensure it's defined or undefined, not empty string
+          videoUrl: videoUrl || undefined,
+          storageId: storageId || undefined,
         };
+        
+        // Log what we're sending for debugging
+        console.log('📤 Sending message request:', {
+          hasMessage: !!request.message,
+          hasScreenshotUrl: !!request.screenshotUrl,
+          hasVideoUrl: !!request.videoUrl,
+          hasStorageId: !!request.storageId,
+          screenshotUrlLength: request.screenshotUrl?.length || 0,
+        });
 
         // For screenshot requests, add optimistic message showing "Requesting screenshot..."
         if (requestScreenshot && !screenshotUrl) {
@@ -157,9 +175,12 @@ export function useChat(sessionIdOrOptions: string | null | UseChatOptions) {
             if (currentMessages.messages.length > initialMessageCount + 1) {
               const newMessages = currentMessages.messages.slice(initialMessageCount);
               setMessages((prev) => {
-                // Remove temp message and add new ones
+                // Remove temp messages
                 const withoutTemp = prev.filter((msg) => !msg.messageId.startsWith('temp-'));
-                return [...withoutTemp, ...newMessages];
+                // Deduplicate: only add messages that don't already exist
+                const existingIds = new Set(withoutTemp.map((m) => m.messageId));
+                const uniqueNewMessages = newMessages.filter((msg) => !existingIds.has(msg.messageId));
+                return [...withoutTemp, ...uniqueNewMessages];
               });
               return response;
             }

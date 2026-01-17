@@ -34,8 +34,13 @@ export function usePolling({
 
   useEffect(() => {
     if (!desktopId || !enabled) {
+      if (!enabled) {
+        console.log('⏸️ Desktop polling disabled')
+      }
       return
     }
+
+    console.log('🔄 Desktop polling started for desktopId:', desktopId, 'interval:', POLLING_INTERVAL, 'ms')
 
     // Track processed request IDs to avoid processing the same request twice
     const processedRequestIds = new Set<string>()
@@ -43,6 +48,15 @@ export function usePolling({
     const poll = async () => {
       try {
         const { requests } = await getPendingRequests(desktopId)
+
+        // Log when we find pending requests (helps debug timing issues)
+        if (requests.length > 0) {
+          const screenshotRequests = requests.filter(r => r.type === 'screenshot')
+          if (screenshotRequests.length > 0) {
+            console.log('📸 Found', screenshotRequests.length, 'screenshot request(s), capturing now...', 
+              screenshotRequests.map(r => ({ id: r.requestId, processed: r.processed })))
+          }
+        }
 
         // Process each request
         for (const request of requests) {
@@ -56,10 +70,13 @@ export function usePolling({
 
           // Handle request based on type
           try {
+            const startTime = Date.now()
             switch (request.type) {
               case 'screenshot':
                 if (callbacksRef.current.onScreenshotRequest) {
+                  console.log('📸 Starting screenshot capture for requestId:', request.requestId)
                   await callbacksRef.current.onScreenshotRequest()
+                  console.log('📸 Screenshot capture completed in', Date.now() - startTime, 'ms')
                 }
                 break
 

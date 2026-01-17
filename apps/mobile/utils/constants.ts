@@ -13,6 +13,4 @@ export const API_ENDPOINTS = {
   RECORDING_STOP: (sessionId: string) => `${API_URL}/api/recording/${sessionId}/stop`,
   CHAT_SEND_MESSAGE: (sessionId: string) => `${API_URL}/api/chat/${sessionId}/message`,
   CHAT_GET_MESSAGES: (sessionId: string) => `${API_URL}/api/chat/${sessionId}/messages`,
-  CHAT_REQUEST_SCREENSHOT: (sessionId: string) => `${API_URL}/api/chat/${sessionId}/request-screenshot`,
-  CHAT_GET_SCREENSHOT_RESULT: (sessionId: string, requestId: string) => `${API_URL}/api/chat/${sessionId}/screenshot-result/${requestId}`,
 } as const;

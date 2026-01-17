@@ -13,15 +13,29 @@ export const create = mutation({
     createdAt: v.number(),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.insert("messages", {
+    // Build insert object - only include mediaUrl if it's actually provided and not too large
+    // NOTE: Never store base64 URLs (they exceed 1MB limit) - only store storageId
+    const insertData: any = {
       sessionId: args.sessionId,
       role: args.role,
       content: args.content,
       mediaType: args.mediaType,
-      mediaStorageId: args.mediaStorageId,
-      mediaUrl: args.mediaUrl,
       createdAt: args.createdAt,
-    });
+    };
+    
+    // Only include mediaStorageId if provided
+    if (args.mediaStorageId) {
+      insertData.mediaStorageId = args.mediaStorageId;
+    }
+    
+    // Only include mediaUrl if provided AND it's not a base64 data URL (which would be too large)
+    // Base64 data URLs start with "data:image/" or "data:video/"
+    if (args.mediaUrl && !args.mediaUrl.startsWith("data:")) {
+      insertData.mediaUrl = args.mediaUrl;
+    }
+    // If mediaUrl is a base64 data URL, skip it entirely (it exceeds Convex's 1MB limit)
+    
+    return await ctx.db.insert("messages", insertData);
   },
 });
 

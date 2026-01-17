@@ -1,6 +1,7 @@
 // API Configuration
 export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
-export const POLLING_INTERVAL = parseInt(import.meta.env.VITE_POLLING_INTERVAL || '2000', 10)
+// Reduced polling interval to 1 second for faster screenshot response
+export const POLLING_INTERVAL = parseInt(import.meta.env.VITE_POLLING_INTERVAL || '1000', 10)
 
 // API Endpoints
 export const API_ENDPOINTS = {

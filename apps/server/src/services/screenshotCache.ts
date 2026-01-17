@@ -1,6 +1,6 @@
 // In-memory cache for instant screenshot preview (base64 URLs)
-// Key: requestId, Value: { base64Url: string, expiresAt: number }
-const screenshotCache = new Map<string, { base64Url: string; expiresAt: number }>();
+// Key: requestId, Value: { base64Url: string, storageId?: string, expiresAt: number }
+const screenshotCache = new Map<string, { base64Url: string; storageId?: string; expiresAt: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 // Clean up expired cache entries periodically
@@ -26,7 +26,7 @@ export function setScreenshotCache(requestId: string, base64Url: string): void {
 /**
  * Get a cached screenshot URL
  */
-export function getScreenshotCache(requestId: string): { base64Url: string; expiresAt: number } | undefined {
+export function getScreenshotCache(requestId: string): { base64Url: string; storageId?: string; expiresAt: number } | undefined {
   const cached = screenshotCache.get(requestId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached;
@@ -36,6 +36,16 @@ export function getScreenshotCache(requestId: string): { base64Url: string; expi
     screenshotCache.delete(requestId);
   }
   return undefined;
+}
+
+/**
+ * Update cache with storageId when it becomes available
+ */
+export function updateScreenshotCacheStorageId(requestId: string, storageId: string): void {
+  const cached = screenshotCache.get(requestId);
+  if (cached) {
+    cached.storageId = storageId;
+  }
 }
 
 /**

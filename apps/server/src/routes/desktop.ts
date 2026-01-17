@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ConvexHttpClient } from "convex/browser";
 import { analyzeWithLLM } from "../services/llm";
-import { setScreenshotCache, deleteScreenshotCache } from "../services/screenshotCache";
+// Screenshot cache no longer needed - screenshots are stored in Convex and retrieved via messages
 
 // Lazy initialization - create client when needed
 function getConvexClient(): ConvexHttpClient {
@@ -210,6 +210,10 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
     ) => {
       try {
         const { desktopId } = request.params;
+        
+        // Log that desktop is polling (helps verify desktop is running)
+        const timestamp = Date.now();
+        fastify.log.debug({ desktopId, timestamp }, "🔄 Desktop polling for pending requests");
 
         try {
           const convexClient = getConvexClient();
@@ -221,20 +225,33 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
           const requests = (pendingRequests || []).map((req: { 
             _id: string; 
             requestType: string; 
-            createdAt: number 
+            createdAt: number;
+            processed: boolean;
           }) => ({
-            requestId: req._id,
+            requestId: String(req._id),
             type: req.requestType,
             createdAt: req.createdAt,
+            processed: req.processed,
           }));
 
-          // Only log if there are actual requests (not empty polling)
+          // Log all polling attempts to help debug - especially for screenshots
           if (requests.length > 0) {
-            fastify.log.info({ 
-              desktopId, 
-              count: requests.length, 
-              types: requests.map((r: { type: string }) => r.type) 
-            }, "Pending requests found");
+            const screenshotRequests = requests.filter((r: { type: string }) => r.type === 'screenshot');
+            if (screenshotRequests.length > 0) {
+              fastify.log.info({ 
+                desktopId, 
+                totalCount: requests.length,
+                screenshotCount: screenshotRequests.length,
+                screenshotRequestIds: screenshotRequests.map((r: { requestId: string }) => r.requestId),
+                allTypes: requests.map((r: { type: string }) => r.type)
+              }, "📸 Pending screenshot requests found - desktop should capture and upload NOW");
+            } else {
+              fastify.log.info({ 
+                desktopId, 
+                count: requests.length, 
+                types: requests.map((r: { type: string }) => r.type)
+              }, "Pending requests found (no screenshots)");
+            }
           }
 
           return { requests };
@@ -262,7 +279,7 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
     ) => {
       try {
         const { desktopId } = request.params;
-        fastify.log.info({ desktopId }, "📸 Screenshot upload received");
+        fastify.log.info({ desktopId, timestamp: new Date().toISOString() }, "📸 Screenshot upload received from desktop");
 
         // Get the file using request.file()
         const data = await request.file();
@@ -375,23 +392,52 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
           });
           
           // Find the most recent screenshot request that's not processed
-          const screenshotRequest = (pendingRequests || [])
-            .filter((req: { requestType: string }) => req.requestType === "screenshot")
+          const unprocessedScreenshots = (pendingRequests || [])
+            .filter((req: { requestType: string; processed: boolean }) => 
+              req.requestType === "screenshot" && !req.processed
+            );
+          
+          fastify.log.info({ 
+            desktopId, 
+            totalPendingRequests: pendingRequests?.length || 0,
+            unprocessedScreenshotCount: unprocessedScreenshots.length,
+            unprocessedRequestIds: unprocessedScreenshots.map((req: { _id: string }) => String(req._id))
+          }, "📸 Looking for unprocessed screenshot requests");
+          
+          const screenshotRequest = unprocessedScreenshots
             .sort((a: { createdAt: number }, b: { createdAt: number }) => 
               b.createdAt - a.createdAt
             )[0];
           
           if (screenshotRequest) {
-            // Store base64 URL in cache immediately for instant preview
-            // Convert Convex ID to string for cache key
+            // Mark request as processed - screenshot will be in assistant message
             const requestIdString = String(screenshotRequest._id);
-            setScreenshotCache(requestIdString, base64Url);
-            fastify.log.info({ desktopId, requestId: requestIdString }, "📸 Screenshot base64 URL cached for instant preview");
-            
             await convexClient.mutation("functions/pendingRequests:markAsProcessed" as any, {
               requestId: screenshotRequest._id,
             });
-            fastify.log.info({ desktopId, requestId: requestIdString }, "📸 Pending request marked as processed");
+            fastify.log.info({ 
+              desktopId, 
+              requestId: requestIdString,
+              requestCreatedAt: (screenshotRequest as any).createdAt,
+              timeSinceCreated: Date.now() - (screenshotRequest as any).createdAt
+            }, "📸 Screenshot request marked as processed - will be included in assistant message");
+          } else {
+            // If no unprocessed request found, log all requests for debugging
+            const allScreenshotRequests = (pendingRequests || [])
+              .filter((req: { requestType: string }) => req.requestType === "screenshot");
+            if (allScreenshotRequests.length > 0) {
+              fastify.log.warn({ 
+                desktopId,
+                screenshotRequestCount: allScreenshotRequests.length,
+                allProcessed: allScreenshotRequests.every((req: { processed: boolean }) => req.processed),
+                requestIds: allScreenshotRequests.map((req: { _id: string; processed: boolean }) => ({
+                  id: String(req._id),
+                  processed: req.processed
+                }))
+              }, "📸 All screenshot requests are already processed - may have been handled by another upload");
+            } else {
+              fastify.log.warn({ desktopId }, "📸 No screenshot request found at all - request may not have been created or desktop disconnected");
+            }
           }
         } catch (markError: unknown) {
           fastify.log.warn({ desktopId, err: markError }, "Failed to mark pending request as processed");
@@ -442,20 +488,39 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
                 );
 
                 if (!hasResponse) {
+                  // Wait for storage to complete so we have the storageId
+                  let screenshotStorageId: string | undefined;
+                  try {
+                    const storageResult = await storagePromise;
+                    if (storageResult?.storageId) {
+                      screenshotStorageId = storageResult.storageId;
+                      fastify.log.info({ desktopId, storageId: screenshotStorageId }, "📸 Screenshot stored in Convex, got storageId");
+                    } else {
+                      fastify.log.warn({ desktopId }, "📸 Screenshot storage completed but no storageId returned");
+                    }
+                  } catch (storageError) {
+                    fastify.log.error({ desktopId, err: storageError }, "❌ Failed to get storageId for screenshot");
+                    // Continue anyway - mobile can still see the assistant response
+                  }
+                  
                   // Create assistant message with screenshot reference
-                  // Note: We don't store the full base64 image (too large for Convex 1MB limit)
-                  // The screenshot is already available via the upload response if needed
+                  // Store the storageId so mobile can fetch the screenshot from Convex
                   await convexClient.mutation("functions/messages:create" as any, {
                     sessionId: session._id,
                     role: "assistant",
                     content: aiResponse,
                     mediaType: "screenshot",
-                    // Don't store full base64 - it exceeds Convex 1MB limit
-                    // The screenshot is available from the upload response if needed
+                    mediaStorageId: screenshotStorageId, // Store the Convex storage ID
+                    // Don't store base64 URL - it exceeds Convex 1MB limit
                     mediaUrl: undefined,
                     createdAt: Date.now(),
                   });
-                  fastify.log.info({ desktopId, sessionId: session._id, responseLength: aiResponse.length }, "✅ Assistant message created in chat");
+                  fastify.log.info({ 
+                    desktopId, 
+                    sessionId: session._id, 
+                    responseLength: aiResponse.length,
+                    hasStorageId: !!screenshotStorageId
+                  }, "✅ Assistant message created in chat with screenshot");
                 } else {
                   fastify.log.info({ desktopId }, "📸 Assistant response already exists for this message");
                 }
