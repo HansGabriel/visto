@@ -70,7 +70,7 @@ A cross-platform solution that enables users to get AI-powered assistance for th
 | Auth (Optional) | **Clerk** (mobile only) | 5-min setup, handles OAuth, optional for demo |
 | File Upload | **@fastify/multipart** | Handle screenshots/videos (up to 100MB) |
 | WebSocket | **@fastify/websocket** | Real-time (optional MVP+) |
-| LLM | **Multi-model support** (switchable) | Claude, GPT-4o, Gemini |
+| LLM | **Gemini 1.5 Flash** (simplified for prototype) | Fast, free tier, supports image & video |
 | Database | **Convex** | Real-time sync, easy setup |
 | Video Storage | **Convex File Storage** | Built-in blob storage |
 
@@ -81,16 +81,18 @@ A cross-platform solution that enables users to get AI-powered assistance for th
 
 </aside>
 
-### Multi-Model LLM Support
+### LLM Model Support (Simplified)
 
-| LLM | Vision | Video | Speed | Cost |
-| --- | --- | --- | --- | --- |
-| **Claude 3.5 Sonnet** | ✅ Excellent | ✅ Good | Fast | $3/1M input |
-| **GPT-4o** | ✅ Good | ✅ Good | Fast | $2.50/1M input |
-| **Gemini 1.5 Pro** | ✅ Good | ✅ **Excellent** | Medium | Free tier (2M tokens/min) |
-| **Gemini 1.5 Flash** | ✅ Good | ✅ Good | **Very Fast** | Free tier (15 RPM) |
+**Current Implementation:** Gemini 1.5 Flash only
 
-**Strategy:** Start with **Gemini 1.5 Flash** for free demos, offer model switching in UI. Gemini has the best video capabilities and generous free tier.
+| Model | Vision | Video | Speed | Cost | Status |
+| --- | --- | --- | --- | --- | --- |
+| **Gemini 1.5 Flash** | ✅ Good | ✅ Good | **Very Fast** | Free tier (15 RPM) | ✅ Implemented |
+| **Gemini 1.5 Pro** | ✅ Good | ✅ **Excellent** | Medium | Free tier (2M tokens/min) | ⚠️ Can switch in code |
+
+**Strategy:** Using **Gemini 1.5 Flash** as default for fast, free demos. Model selection removed from schema to simplify prototype. Can switch to Pro in backend code (`services/llm.ts`) if needed for better video analysis.
+
+**Note:** Other models (Claude, GPT-4o) removed for prototype simplicity. Can be added back if needed.
 
 ---
 
@@ -107,7 +109,7 @@ A cross-platform solution that enables users to get AI-powered assistance for th
 - [ ]  **Desktop:** Record screen video (start/stop)
 - [ ]  **Desktop:** Send media to backend
 - [ ]  **Desktop:** Recording status indicator on desktop
-- [ ]  **Backend:** Multi-model LLM routing
+- [x]  **Backend:** LLM routing (Gemini Flash) ✅ **Completed**
 - [ ]  **Backend:** Process images + videos
 - [ ]  **Backend:** Return AI response to mobile
 
@@ -258,18 +260,12 @@ fastify.get('/api/user/sessions', {
 #### Updated Schema (with Clerk)
 
 ```tsx
-// Add userId to sessions table
+// Sessions table with optional userId for Clerk auth
 sessions: defineTable({
-  userId: v.optional(v.string()), // Clerk user ID
   desktopId: v.string(),
   mobileConnected: v.boolean(),
   pairingCode: v.string(),
-  selectedModel: v.union(
-    v.literal("claude"),
-    v.literal("gpt4o"),
-    v.literal("gemini-pro"),
-    v.literal("gemini-flash")
-  ),
+  userId: v.optional(v.string()), // Clerk user ID (optional - sessions work without auth)
   createdAt: v.number(),
 })
   .index("by_user", ["userId"])
@@ -343,6 +339,8 @@ This turns the lack of traditional auth into a **feature** (instant access, no s
 ---
 
 ## Architecture & Data Flow
+
+**Detailed architecture documentation:** See [`docs/architecture.md`](./architecture.md) for comprehensive architecture details, API reference, and data flow diagrams.
 
 ### Pairing Flow
 
@@ -449,10 +447,14 @@ Response: { messages: Message[] }
 
 ---
 
-## Convex Schema Implementation
+## Convex Schema Implementation ✅ **COMPLETED**
+
+**Location:** `apps/server/convex/schema.ts`
+
+**Status:** ✅ **Implemented** - Schema and functions created at `apps/server/convex/`
 
 ```tsx
-// convex/schema.ts
+// apps/server/convex/schema.ts
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
@@ -461,19 +463,46 @@ export default defineSchema({
     desktopId: v.string(),
     mobileConnected: v.boolean(),
     pairingCode: v.string(),
-    selectedModel: v.union(
-      v.literal("claude"),
-      v.literal("gpt4o"),
-      v.literal("gemini-pro"),
-      v.literal("gemini-flash")
-    ),
+    // Note: Model selection removed - using Gemini Flash as default
+    // Can be configured in backend service if needed to switch models later
+    userId: v.optional(v.string()), // Clerk user ID (optional for auth)
     createdAt: v.number(),
   })
     .index("by_pairing_code", ["pairingCode"])
-    .index("by_desktop_id", ["desktopId"]),
+    .index("by_desktop_id", ["desktopId"])
+    .index("by_user", ["userId"]),
 
   messages: defineTable({
-    sessionId: 
+    sessionId: v.id("sessions"),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    content: v.string(),
+    mediaType: v.union(v.literal("screenshot"), v.literal("video"), v.null()),
+    mediaStorageId: v.optional(v.id("_storage")),
+    mediaUrl: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_session", ["sessionId"]),
+
+  pendingRequests: defineTable({
+    desktopId: v.string(),
+    requestType: v.union(
+      v.literal("screenshot"),
+      v.literal("start-recording"),
+      v.literal("stop-recording")
+    ),
+    processed: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_desktop_id", ["desktopId"])
+    .index("by_desktop_unprocessed", ["desktopId", "processed"]),
+});
+```
+
+**Implementation Status:**
+- ✅ Schema created at `apps/server/convex/schema.ts`
+- ✅ Convex functions created in `apps/server/convex/functions/`:
+  - `sessions.ts` - Session management (create, find, update)
+  - `messages.ts` - Message storage (create, get by session)
+  - `pendingRequests.ts` - Request queue (create, get by desktop)v.id("sessions"), 
 ```
 
 ---
@@ -489,15 +518,36 @@ export default defineSchema({
 | 1:00 - 1:30 | Setup Electron app with Vite |
 | 1:30 - 2:00 | Setup Fastify server, Convex connection |
 
-### Phase 2: Core Backend (3 hours)
+### Phase 2: Core Backend (3 hours) ✅ **COMPLETED**
 
-| Time | Task |
-| --- | --- |
-| 2:00 - 2:30 | Implement pairing endpoints |
-| 2:30 - 3:00 | Implement screenshot upload endpoint |
-| 3:00 - 3:30 | Implement video upload endpoint |
-| 3:30 - 4:30 | Multi-model LLM integration (Gemini + Claude) |
-| 4:30 - 5:00 | Implement chat message endpoint with model routing |
+**Status:** Backend implementation complete. See `apps/server/` for full code.
+
+| Time | Task | Status |
+| --- | --- | --- |
+| 2:00 - 2:30 | Implement pairing endpoints | ✅ Done (`routes/mobile.ts`, `routes/desktop.ts`) |
+| 2:30 - 3:00 | Implement screenshot upload endpoint | ✅ Done (`routes/desktop.ts`) |
+| 3:00 - 3:30 | Implement video upload endpoint | ✅ Done (`routes/desktop.ts`) |
+| 3:30 - 4:30 | LLM integration (Gemini Flash) | ✅ Done (`services/llm.ts`) |
+| 4:30 - 5:00 | Implement chat message endpoint with LLM routing | ✅ Done (`routes/chat.ts`) |
+
+**Additional Implementation:**
+- ✅ Convex schema created (`convex/schema.ts`)
+- ✅ Convex functions created (`convex/functions/`)
+- ✅ Server infrastructure with plugins (CORS, multipart, Clerk)
+- ✅ Environment variable loading with `dotenv/config`
+- ✅ Type definitions (`types/api.ts`)
+
+**Files Created:**
+- `apps/server/convex/schema.ts`
+- `apps/server/convex/functions/sessions.ts`
+- `apps/server/convex/functions/messages.ts`
+- `apps/server/convex/functions/pendingRequests.ts`
+- `apps/server/src/routes/desktop.ts`
+- `apps/server/src/routes/mobile.ts`
+- `apps/server/src/routes/chat.ts`
+- `apps/server/src/services/llm.ts`
+- `apps/server/src/plugins/clerk.ts`
+- `apps/server/src/types/api.ts`
 
 ### Phase 3: Desktop App (3.5 hours)
 
@@ -517,7 +567,7 @@ export default defineSchema({
 | 9:00 - 9:30 | Pairing screen UI |
 | 9:30 - 10:30 | Chat interface UI (messages, input, media) |
 | 10:30 - 11:00 | Recording controls (start/stop buttons) |
-| 11:00 - 11:30 | Model selector UI |
+| 11:00 - 11:30 | Clerk auth UI (sign-in/sign-up screens) |
 | 11:30 - 12:00 | TanStack Query integration |
 | 12:00 - 12:30 | Polish UI, loading states, error handling |
 
@@ -559,84 +609,67 @@ npx tailwindcss init -p
 cd ../server
 npm init -y
 npm install fastify @fastify/cors @fastify/multipart zod
-npm install @anthropic-ai/sdk @google/generative-ai openai convex
-npm install @ffmpeg/ffmpeg  # For video compression (optional)
+npm install @google/generative-ai convex dotenv  # Only Gemini for prototype
+npm install @clerk/fastify  # Optional - for authentication
+npm install -D tsx @types/node  # Development dependencies
 
 # (OPTIONAL) Add Clerk to backend if using auth
-npm install @clerk/fastify
+# Already included above
 
 # Install shared dependencies
 cd ../.. 
 npm install -D typescript @types/node
 ```
 
+**Note:** Backend implementation is complete. Dependencies installed:
+- ✅ `convex` - Database
+- ✅ `@google/generative-ai` - Gemini LLM
+- ✅ `@fastify/cors` - CORS support
+- ✅ `@fastify/multipart` - File uploads
+- ✅ `dotenv` - Environment variables
+- ✅ `@clerk/fastify` - Authentication (optional)
+- ✅ `tsx` - TypeScript execution for dev
+
 ---
 
 ## Key Code Snippets
 
-### Multi-Model LLM Service (Backend)
+### LLM Service (Backend) - Gemini Only
+
+**Status:** ✅ **Implemented** - See `apps/server/src/services/llm.ts`
 
 ```tsx
-import Anthropic from '@anthropic-ai/sdk';
+// apps/server/src/services/llm.ts
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import OpenAI from 'openai';
 
-type ModelType = 'claude' | 'gpt4o' | 'gemini-pro' | 'gemini-flash';
+// Using Gemini 1.5 Flash as default (fast, free tier)
+const DEFAULT_MODEL = 'gemini-1.5-flash';
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_KEY });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY!);
-const openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
 
-async function analyzeMedia(
-  model: ModelType,
+export async function analyzeWithLLM(
   mediaBase64: string,
   mediaType: 'image' | 'video',
-  userQuery: string
-) {
-  switch (model) {
-    case 'gemini-pro':
-    case 'gemini-flash': {
-      const geminiModel = genAI.getGenerativeModel({
-        model: model === 'gemini-pro' ? 'gemini-1.5-pro' : 'gemini-1.5-flash',
-      });
-      const result = await geminiModel.generateContent([
-        {
-          inlineData: {
-            data: mediaBase64,
-            mimeType: mediaType === 'video' ? 'video/mp4' : 'image/png',
-          },
-        },
-        userQuery,
-      ]);
-      return result.response.text();
-    }
+  userQuery: string,
+  model?: 'gemini-1.5-flash' | 'gemini-1.5-pro' // Optional model override
+): Promise<string> {
+  const modelName = model || DEFAULT_MODEL;
+  const geminiModel = genAI.getGenerativeModel({ model: modelName });
 
-    case 'claude': {
-      const response = await anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1024,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: 'image/png',
-                  data: mediaBase64,
-                },
-              },
-              { type: 'text', text: userQuery },
-            ],
-          },
-        ],
-      });
-      return response.content[0].text;
-    }
+  const mimeType = mediaType === 'video' ? 'video/mp4' : 'image/png';
 
-    case 'gpt4o': {
-      const response = await 
+  const result = await geminiModel.generateContent([
+    {
+      inlineData: {
+        data: mediaBase64,
+        mimeType,
+      },
+    },
+    userQuery,
+  ]);
+
+  return result.response.text();
+}
 ```
 
 ### Screenshot Capture (Electron)
@@ -875,7 +908,7 @@ export function useSendMessage(sessionId: string) {
 
 **2. Chat Screen**
 
-- Header with model selector dropdown
+- Header with connection status
 - Message list (user/assistant bubbles)
 - Media previews (screenshots/video thumbnails)
 - Bottom input bar with:
@@ -1041,7 +1074,7 @@ Uploading:  ⬆️  (green)
 │  desktopId        │ string (unique)                      │
 │  mobileConnected  │ boolean                              │
 │  pairingCode      │ string (6 chars, uppercase)          │
-│  selectedModel    │ 'claude' | 'gpt4o' | 'gemini-...'   │
+│  userId           │ string (optional, Clerk user ID)    │
 │  createdAt        │ number (timestamp)                   │
 └──────────────────────────────────────────────────────────┘
 
@@ -1053,20 +1086,17 @@ Uploading:  ⬆️  (green)
 │  role             │ 'user' | 'assistant'                 │
 │  content          │ string (message text)                │
 │  mediaType        │ 'screenshot' | 'video' | null        │
+│  mediaStorageId   │ Id<"_storage"> (optional)             │
 │  mediaUrl         │ string (Convex storage URL) | null   │
-│  model            │ string (which LLM was used)          │
 │  createdAt        │ number (timestamp)                   │
+│  ⚠️ Note: Model field removed - always uses Gemini Flash│
 └──────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────┐
 │                    RECORDINGS TABLE                      │
 ├──────────────────────────────────────────────────────────┤
-│  _id              │ string (auto)                        │
-│  sessionId        │ Id<"sessions"> (foreign key)         │
-│  storageId        │ Id<"_storage"> (Convex file)         │
-│  duration         │ number (seconds)                     │
-│  status           │ 'recording' | 'processing' | 'ready' │
-│  createdAt        │ number (timestamp)                   │
+│  ⚠️  Note: Not implemented in current schema            │
+│  Recordings are stored as messages with mediaType="video"│
 └──────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────┐
@@ -1104,7 +1134,7 @@ sessions.insert({
   desktopId: "desktop_abc123",
   mobileConnected: false,
   pairingCode: "ABC123",
-  selectedModel: "gemini-flash",
+  userId: undefined, // Optional - no auth by default
   createdAt: 
 ```
 
@@ -1156,7 +1186,7 @@ npm run dev  # Runs on
 6. **Perform action** → Login to an app, encounter an error
 7. **Stop recording** → "Stop, and ask: 'Why did I get this login error?'"
 8. **Show video analysis** → "Gemini watches the video and identifies the issue"
-9. **Model switching** → "We support Claude, GPT, and Gemini — switch anytime"
+9. **AI Analysis** → "Gemini Flash analyzes the video and identifies the issue"
 </aside>
 
 ---
@@ -1195,11 +1225,13 @@ Based on your project, consider targeting:
 
 - Recording controls (start/stop buttons)
 
-- Model selector
-
 - Voice input integration
 
 - TanStack Query for API calls
+
+- Clerk auth (email/password) - optional
+
+**Note:** Model selector removed - using Gemini Flash only
  |
 | **Person 2: Desktop + Backend** | Electron app + Fastify server | **Electron:**
 
@@ -1213,17 +1245,15 @@ Based on your project, consider targeting:
 
 - React UI with Tailwind
 
-**Backend:**
+**Backend:** ✅ **COMPLETED**
 
-- Fastify server setup
-
-- Pairing endpoints
-
-- Multi-model LLM routing
-
-- File upload handling
-
-- Convex integration
+- ✅ Fastify server setup (`src/index.ts`)
+- ✅ Pairing endpoints (`routes/desktop.ts`, `routes/mobile.ts`)
+- ✅ LLM service with Gemini Flash (`services/llm.ts`)
+- ✅ File upload handling (`routes/desktop.ts` - screenshot/video)
+- ✅ Convex integration (schema + functions)
+- ✅ Chat endpoints with LLM integration (`routes/chat.ts`)
+- ✅ Clerk authentication plugin (`plugins/clerk.ts`)
  |
 
 ### Coordination Points
