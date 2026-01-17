@@ -44,15 +44,34 @@ export default async function mobileRoutes(fastify: FastifyInstance): Promise<vo
           return reply.code(400).send({ error: "Pairing code is required" });
         }
 
-        // Find session by pairing code in Convex
+        // Normalize pairing code: uppercase and trim
+        const normalizedCode = pairingCode.trim().toUpperCase();
+        
+        fastify.log.info({ 
+          originalCode: pairingCode, 
+          normalizedCode,
+          codeLength: normalizedCode.length 
+        }, "Pairing attempt");
+
+        // Find session by pairing code in Convex (supports flexible matching)
         const convexClient = getConvexClient();
-        const session = await convexClient.query("functions/sessions:findByPairingCode" as any, {
-          pairingCode,
+        const session = await convexClient.query("functions/sessions:findByPairingCodeFlexible" as any, {
+          pairingCode: normalizedCode,
         });
 
         if (!session) {
-          return reply.code(404).send({ error: "Invalid pairing code" });
+          fastify.log.warn({ 
+            normalizedCode,
+            codeLength: normalizedCode.length 
+          }, "Pairing code not found");
+          return reply.code(404).send({ error: "Invalid pairing code. Please check the code displayed on your desktop and try again." });
         }
+        
+        fastify.log.info({ 
+          sessionId: session._id,
+          storedCode: session.pairingCode,
+          providedCode: normalizedCode 
+        }, "Pairing code matched successfully");
 
         const sessionId = session._id;
 

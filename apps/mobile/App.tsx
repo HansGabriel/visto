@@ -1,6 +1,7 @@
 import "./global.css";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { SessionProvider, useSession } from "./context/SessionContext";
 import { HomeScreen } from "./screens/HomeScreen";
 import { PairingScreen } from "./screens/PairingScreen";
 import { ConnectedScreen } from "./screens/ConnectedScreen";
@@ -9,13 +10,19 @@ import { ChatScreen } from "./screens/ChatScreen";
 // Types
 type Screen = "home" | "pairing" | "connected" | "chat";
 
-export default function App() {
+function AppContent() {
   const [currentScreen, setCurrentScreen] = useState<Screen>("home");
-  const [isConnected, setIsConnected] = useState(false);
+  const { isConnected, isLoading: sessionLoading } = useSession();
+
+  // Auto-navigate to chat if session exists on mount
+  useEffect(() => {
+    if (!sessionLoading && isConnected && currentScreen === "home") {
+      setCurrentScreen("chat");
+    }
+  }, [isConnected, sessionLoading, currentScreen]);
 
   function navigateToHome() {
     setCurrentScreen("home");
-    setIsConnected(false);
   }
 
   function navigateToPairing() {
@@ -24,7 +31,6 @@ export default function App() {
 
   function navigateToConnected() {
     setCurrentScreen("connected");
-    setIsConnected(true);
   }
 
   function navigateToChat() {
@@ -32,7 +38,7 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
+    <>
       {currentScreen === "home" && (
         <HomeScreen onGetStarted={navigateToPairing} />
       )}
@@ -55,6 +61,16 @@ export default function App() {
           onReconnect={navigateToPairing}
         />
       )}
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <SessionProvider>
+        <AppContent />
+      </SessionProvider>
     </SafeAreaProvider>
   );
 }

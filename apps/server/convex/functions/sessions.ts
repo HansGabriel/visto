@@ -65,3 +65,41 @@ export const updateMobileConnected = mutation({
     });
   },
 });
+
+// Find session by pairing code (supports flexible matching)
+export const findByPairingCodeFlexible = query({
+  args: { pairingCode: v.string() },
+  handler: async (ctx, args) => {
+    const normalizedCode = args.pairingCode.toUpperCase().trim();
+    
+    // Try exact match first
+    const exactMatch = await ctx.db
+      .query("sessions")
+      .withIndex("by_pairing_code", (q) =>
+        q.eq("pairingCode", normalizedCode)
+      )
+      .first();
+    
+    if (exactMatch) {
+      return exactMatch;
+    }
+    
+    // If code is 5 characters, try to match against 6-character codes
+    // (handles backward compatibility with old 5-char codes)
+    if (normalizedCode.length === 5) {
+      const allSessions = await ctx.db.query("sessions").collect();
+      const match = allSessions.find((session) => {
+        const sessionCode = session.pairingCode.toUpperCase();
+        return sessionCode.length === 6 && sessionCode.startsWith(normalizedCode);
+      });
+      return match || null;
+    }
+    
+    // If code is 6 characters, try exact match (already tried above, but keep for clarity)
+    if (normalizedCode.length === 6) {
+      return null; // Already tried exact match above
+    }
+    
+    return null;
+  },
+});

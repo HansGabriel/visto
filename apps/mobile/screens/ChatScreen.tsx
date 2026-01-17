@@ -1,23 +1,21 @@
-import React, { useState } from "react";
-import { View, Text, TextInput, Pressable, ScrollView, KeyboardAvoidingView, Platform } from "react-native";
+import React, { useState, useEffect, useRef } from "react";
+import { View, Text, TextInput, Pressable, ScrollView, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { StarField } from "../components/StarField";
 import { MessageBubble } from "../components/MessageBubble";
 import { AttachmentModal } from "../components/AttachmentModal";
+import { RecordingOverlay } from "../components/RecordingOverlay";
+import { useSession } from "../context/SessionContext";
+import { useChat } from "../hooks/useChat";
+import { useRecording } from "../hooks/useRecording";
 
 // Types
 interface ChatScreenProps {
   onBack: () => void;
   isConnected: boolean;
   onReconnect: () => void;
-}
-
-interface Message {
-  id: string;
-  text: string;
-  isUser: boolean;
 }
 
 // Static content
@@ -27,47 +25,96 @@ const WELCOME_MESSAGE = "How can I help? Connect and ask me anything about your 
 
 // Main component
 export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    { id: "1", text: WELCOME_MESSAGE, isUser: false }
-  ]);
+  const { sessionId } = useSession();
   const [inputText, setInputText] = useState("");
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  function handleSend() {
-    if (!inputText.trim()) return;
-    
-    // Add user message
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      text: inputText,
-      isUser: true
+  const { messages, isLoading, isSending, sendMessage } = useChat(sessionId);
+  const { startRecording, stopRecording, isRecording } = useRecording(sessionId);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (messages.length > 0) {
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  }, [messages]);
+
+  // Recording timer
+  useEffect(() => {
+    if (isRecording) {
+      setRecordingDuration(0);
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+    } else {
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+        recordingIntervalRef.current = null;
+      }
+      setRecordingDuration(0);
+    }
+
+    return () => {
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+      }
     };
-    
-    setMessages([...messages, userMessage]);
-    setInputText("");
-    
-    // TODO: Send to backend and get response
-    // For demo, add a mock response
-    setTimeout(() => {
-      const aiResponse: Message = {
-        id: (Date.now() + 1).toString(),
-        text: "I received your message! This is a demo response.",
-        isUser: false
-      };
-      setMessages(prev => [...prev, aiResponse]);
-    }, 1000);
+  }, [isRecording]);
+
+  async function handleSend() {
+    if (!inputText.trim() || !sessionId) {
+      return;
+    }
+
+    try {
+      await sendMessage(inputText.trim());
+      setInputText("");
+    } catch (error) {
+      console.error('Failed to send message:', error);
+    }
   }
 
-  function handleTakeScreenshot() {
+  async function handleTakeScreenshot() {
     setShowAttachmentModal(false);
-    console.log("Take screenshot - functionality to be implemented");
-    // TODO: Implement screenshot capture
+    if (!sessionId) {
+      return;
+    }
+
+    try {
+      // Send message with screenshot request
+      await sendMessage("", true); // requestScreenshot: true
+    } catch (error) {
+      console.error('Failed to request screenshot:', error);
+    }
   }
 
-  function handleRecordVideo() {
+  async function handleRecordVideo() {
     setShowAttachmentModal(false);
-    console.log("Record video - functionality to be implemented");
-    // TODO: Implement video recording
+    if (!sessionId) {
+      return;
+    }
+
+    try {
+      await startRecording();
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+    }
+  }
+
+  async function handleStopRecording() {
+    try {
+      await stopRecording();
+      // After stopping, send a message asking about the video
+      // The video will be attached automatically by the desktop app
+      await sendMessage("What happened in this recording?");
+    } catch (error) {
+      console.error('Failed to stop recording:', error);
+    }
   }
 
   function handleVoiceInput() {
@@ -122,16 +169,27 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
         keyboardVerticalOffset={90}
       >
         <ScrollView 
+          ref={scrollViewRef}
           className="flex-1"
           contentContainerStyle={{ paddingTop: 16, paddingBottom: 16 }}
         >
-          {messages.map((message) => (
-            <MessageBubble
-              key={message.id}
-              message={message.text}
-              isUser={message.isUser}
-            />
-          ))}
+          {isLoading && messages.length === 0 ? (
+            <View className="flex-1 items-center justify-center py-8">
+              <ActivityIndicator size="large" color="#EC4899" />
+              <Text className="text-white mt-2">Loading messages...</Text>
+            </View>
+          ) : messages.length === 0 ? (
+            <View className="flex-1 items-center justify-center py-8">
+              <Text className="text-white text-lg mb-2">{WELCOME_MESSAGE}</Text>
+            </View>
+          ) : (
+            messages.map((message) => (
+              <MessageBubble
+                key={message.messageId}
+                message={message}
+              />
+            ))
+          )}
         </ScrollView>
 
         {/* Input Section */}
@@ -140,7 +198,10 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
             <View className="flex-1 bg-gray-800 border-2 border-accent-blue shadow-xl shadow-accent-blue rounded-full flex-row items-center px-4 py-3">
             <Pressable
               onPress={() => setShowAttachmentModal(true)}
-              className="w-8 h-8 bg-accent-pink border border-accent-blue rounded-full items-center justify-center mr-3 active:opacity-80 active:scale-95"
+              disabled={!sessionId || isSending || isRecording}
+              className={`w-8 h-8 bg-accent-pink border border-accent-blue rounded-full items-center justify-center mr-3 active:opacity-80 active:scale-95 ${
+                !sessionId || isSending || isRecording ? 'opacity-50' : ''
+              }`}
               accessibilityRole="button"
               accessibilityLabel="Add attachment"
               accessibilityHint="Attach screenshot or video"
@@ -157,11 +218,15 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
               multiline
               maxLength={500}
               textAlignVertical="center"
+              editable={!!sessionId && !isSending && !isRecording}
             />
             
             <Pressable
               onPress={handleVoiceInput}
-              className="w-8 h-8 bg-accent-blue border border-accent-pink rounded-full items-center justify-center ml-3 active:opacity-80 active:scale-95"
+              disabled={!sessionId || isSending || isRecording}
+              className={`w-8 h-8 bg-accent-blue border border-accent-pink rounded-full items-center justify-center ml-3 active:opacity-80 active:scale-95 ${
+                !sessionId || isSending || isRecording ? 'opacity-50' : ''
+              }`}
               accessibilityRole="button"
               accessibilityLabel="Voice input"
               accessibilityHint="Record voice message"
@@ -172,9 +237,9 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
             
             <Pressable
               onPress={handleSend}
-              disabled={!inputText.trim()}
+              disabled={!inputText.trim() || isSending || !sessionId}
               className={`w-12 h-12 rounded-full items-center justify-center active:opacity-80 active:scale-95 ${
-                inputText.trim() 
+                inputText.trim() && !isSending && sessionId
                   ? 'bg-accent-blue border-2 border-accent-pink shadow-lg shadow-accent-pink' 
                   : 'bg-gray-700 border-2 border-gray-600 opacity-50'
               }`}
@@ -182,13 +247,17 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
               accessibilityLabel="Send message"
               accessibilityHint="Send your message to the assistant"
             >
-              <Text className={inputText.trim() ? "text-white text-2xl" : "text-gray-500 text-2xl"}>➤</Text>
+              {isSending ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <Text className={inputText.trim() && sessionId ? "text-white text-2xl" : "text-gray-500 text-2xl"}>➤</Text>
+              )}
             </Pressable>
           </View>
           
           {/* Connection Status */}
           <View className="items-center mt-2">
-            {isConnected ? (
+            {sessionId && isConnected ? (
               <View className="flex-row items-center">
                 <View className="w-2 h-2 bg-green-500 rounded-full mr-2" />
                 <Text className="text-white text-sm">Online</Text>
@@ -208,6 +277,14 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
         onClose={() => setShowAttachmentModal(false)}
         onTakeScreenshot={handleTakeScreenshot}
         onRecordVideo={handleRecordVideo}
+      />
+
+      {/* Recording Overlay */}
+      <RecordingOverlay
+        isRecording={isRecording}
+        duration={recordingDuration}
+        onStop={handleStopRecording}
+        maxDuration={30}
       />
     </SafeAreaView>
   );

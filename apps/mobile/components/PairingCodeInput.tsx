@@ -10,7 +10,7 @@ interface PairingCodeInputProps {
 // Main component
 export function PairingCodeInput({ value, onChangeText }: PairingCodeInputProps) {
   const inputRef = useRef<TextInput>(null);
-  const codeLength = 5;
+  const codeLength = 6;
   const characters = value.toUpperCase().split("").slice(0, codeLength);
   
   // Pad with empty strings if needed
@@ -55,7 +55,7 @@ export function PairingCodeInput({ value, onChangeText }: PairingCodeInputProps)
         autoFocus={true}
         style={{ position: 'absolute', opacity: 0, height: 1, width: 1 }}
         accessibilityLabel="Enter pairing code"
-        accessibilityHint="Type your 5-character pairing code"
+        accessibilityHint="Type your 6-character pairing code"
       />
     </View>
   );

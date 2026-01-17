@@ -29,8 +29,8 @@ export function PairingScreen({
     )
   }
 
-  // Split pairing code into individual characters
-  const codeChars = pairingCode.split('').slice(0, 5)
+  // Split pairing code into individual characters (show all characters)
+  const codeChars = pairingCode.split('')
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/20 to-gray-900 relative overflow-hidden">
