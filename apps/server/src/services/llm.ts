@@ -32,19 +32,21 @@ export async function analyzeWithLLM(
     throw new Error("Media base64 data is empty");
   }
 
-  try {
-    // For videos, enhance the prompt to ensure comprehensive analysis
-    let enhancedQuery = userQuery;
-    if (mediaType === "video") {
-      // Add general instructions to analyze all frames comprehensively
-      enhancedQuery = `${userQuery}
+  // For videos, enhance the prompt to ensure comprehensive analysis
+  // This must be done before the try block so fallback models can use it
+  let enhancedQuery = userQuery;
+  if (mediaType === "video") {
+    // Add general instructions to analyze all frames comprehensively
+    enhancedQuery = `${userQuery}
 
 IMPORTANT: When analyzing this video, ensure you:
 - Examine ALL frames from beginning to end, especially the final frame
 - Capture ALL visible content, details, text, numbers, and information
 - Do not miss or overlook content that appears in later frames
 - Analyze the complete final state shown at the end of the video`;
-    }
+  }
+
+  try {
     
     // Generate content with media and query using new API
     // Note: For videos, ensure the base64 data is valid and the MIME type matches
@@ -125,7 +127,7 @@ IMPORTANT: When analyzing this video, ensure you:
                     data: mediaBase64,
                   },
                 },
-                { text: userQuery },
+                { text: enhancedQuery },
               ],
             });
             
