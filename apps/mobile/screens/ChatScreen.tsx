@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, KeyboardAvoidingView, Platform } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import { StarField } from "../components/StarField";
 import { MessageBubble } from "../components/MessageBubble";
 import { AttachmentModal } from "../components/AttachmentModal";
@@ -69,6 +70,11 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
     // TODO: Implement video recording
   }
 
+  function handleVoiceInput() {
+    console.log("Voice input - functionality to be implemented");
+    // TODO: Implement voice recording
+  }
+
   return (
     <SafeAreaView className="flex-1 bg-space-dark">
       <StatusBar style="light" />
@@ -130,12 +136,14 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
 
         {/* Input Section */}
         <View className="px-4 pb-4">
-          <View className="bg-gray-800 border-2 border-accent-blue shadow-xl shadow-accent-blue rounded-full flex-row items-center px-4 py-3">
+          <View className="flex-row items-center gap-3 mb-2">
+            <View className="flex-1 bg-gray-800 border-2 border-accent-blue shadow-xl shadow-accent-blue rounded-full flex-row items-center px-4 py-3">
             <Pressable
               onPress={() => setShowAttachmentModal(true)}
               className="w-8 h-8 bg-accent-pink border border-accent-blue rounded-full items-center justify-center mr-3 active:opacity-80 active:scale-95"
               accessibilityRole="button"
               accessibilityLabel="Add attachment"
+              accessibilityHint="Attach screenshot or video"
             >
               <Text className="text-white text-lg">+</Text>
             </Pressable>
@@ -152,12 +160,29 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
             />
             
             <Pressable
+              onPress={handleVoiceInput}
+              className="w-8 h-8 bg-accent-blue border border-accent-pink rounded-full items-center justify-center ml-3 active:opacity-80 active:scale-95"
+              accessibilityRole="button"
+              accessibilityLabel="Voice input"
+              accessibilityHint="Record voice message"
+            >
+              <Ionicons name="mic" size={18} color="white" />
+            </Pressable>
+          </View>
+            
+            <Pressable
               onPress={handleSend}
-              className="ml-3 active:opacity-70"
+              disabled={!inputText.trim()}
+              className={`w-12 h-12 rounded-full items-center justify-center active:opacity-80 active:scale-95 ${
+                inputText.trim() 
+                  ? 'bg-accent-blue border-2 border-accent-pink shadow-lg shadow-accent-pink' 
+                  : 'bg-gray-700 border-2 border-gray-600 opacity-50'
+              }`}
               accessibilityRole="button"
               accessibilityLabel="Send message"
+              accessibilityHint="Send your message to the assistant"
             >
-              <Text className="text-accent-blue text-xl">➤</Text>
+              <Text className={inputText.trim() ? "text-white text-2xl" : "text-gray-500 text-2xl"}>➤</Text>
             </Pressable>
           </View>
           
