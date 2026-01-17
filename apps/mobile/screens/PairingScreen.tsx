@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { View, Text, Pressable } from "react-native";
+import { View, Text, Pressable, ActivityIndicator } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StarField } from "../components/StarField";
 import { GradientButton } from "../components/GradientButton";
 import { PairingCodeInput } from "../components/PairingCodeInput";
+import { usePairing } from "../hooks/usePairing";
 
 // Types
 interface PairingScreenProps {
@@ -18,29 +19,20 @@ const HEADER_MAIN = "Visto";
 const HEADER_ACCENT = "AI";
 const SUBHEADER = "Connect to Your Desktop";
 const HINT_TEXT = "Find the code in your desktop app's system tray";
-const CORRECT_CODE = "ABC13"; // Demo correct code
 
 // Main component
 export function PairingScreen({ onBack, onConnected }: PairingScreenProps) {
   const [code, setCode] = useState("");
-  const [error, setError] = useState("");
+  const { pair, isLoading, error: pairingError } = usePairing();
 
-  function handleConnect() {
-    if (code.length !== 5) {
-      setError("Please enter a 5-character pairing code");
+  async function handleConnect() {
+    if (code.length !== 6) {
       return;
     }
     
-    // Happy path: correct code
-    if (code.toUpperCase() === CORRECT_CODE) {
-      console.log("Correct code! Connecting...");
-      setError("");
+    const result = await pair(code);
+    if (result) {
       onConnected();
-    } else {
-      // Sad path: incorrect code
-      console.log("Incorrect code");
-      setError("Invalid pairing code. Please try again.");
-      setCode(""); // Clear the input
     }
   }
 
@@ -104,26 +96,32 @@ export function PairingScreen({ onBack, onConnected }: PairingScreenProps) {
         <View className="mb-12">
           <PairingCodeInput
             value={code}
-            onChangeText={(text) => {
-              setCode(text);
-              setError(""); // Clear error when user types
-            }}
+            onChangeText={setCode}
+            editable={!isLoading}
           />
-          {error ? (
+          {pairingError ? (
             <Text className="text-red-500 text-sm mt-2 text-center">
-              {error}
+              {pairingError}
             </Text>
           ) : null}
         </View>
 
         {/* Connect Button */}
         <View className="mb-12">
-          <GradientButton
-            title="CONNECT"
-            onPress={handleConnect}
-            accessibilityLabel="Connect to desktop"
-            accessibilityHint="Pairs your device with the desktop application"
-          />
+          {isLoading ? (
+            <View className="items-center justify-center py-4">
+              <ActivityIndicator size="large" color="#EC4899" />
+              <Text className="text-white mt-2">Connecting...</Text>
+            </View>
+          ) : (
+            <GradientButton
+              title="CONNECT"
+              onPress={handleConnect}
+              disabled={code.length !== 6 || isLoading}
+              accessibilityLabel="Connect to desktop"
+              accessibilityHint="Pairs your device with the desktop application"
+            />
+          )}
         </View>
 
         {/* Hint Section */}
