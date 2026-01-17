@@ -1,24 +1,16 @@
-import { ipcRenderer, contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 
-// --------- Expose some API to the Renderer process ---------
-contextBridge.exposeInMainWorld('ipcRenderer', {
-  on(...args: Parameters<typeof ipcRenderer.on>) {
-    const [channel, listener] = args
-    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args))
+// --------- Expose secure API to the Renderer process ---------
+// Using contextBridge.exposeInMainWorld() for secure API exposure
+// Only exposing specific functions, not raw ipcRenderer methods
+contextBridge.exposeInMainWorld('electronAPI', {
+  captureScreenshot: () => {
+    return ipcRenderer.invoke('capture-screenshot')
   },
-  off(...args: Parameters<typeof ipcRenderer.off>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.off(channel, ...omit)
+  startRecording: () => {
+    return ipcRenderer.invoke('start-recording')
   },
-  send(...args: Parameters<typeof ipcRenderer.send>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.send(channel, ...omit)
+  stopRecording: () => {
+    return ipcRenderer.invoke('stop-recording')
   },
-  invoke(...args: Parameters<typeof ipcRenderer.invoke>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.invoke(channel, ...omit)
-  },
-
-  // You can expose other APTs you need here.
-  // ...
 })

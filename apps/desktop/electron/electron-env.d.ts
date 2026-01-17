@@ -21,7 +21,5 @@ declare namespace NodeJS {
   }
 }
 
-// Used in Renderer process, expose in `preload.ts`
-interface Window {
-  ipcRenderer: import('electron').IpcRenderer
-}
+// Note: Window.electronAPI is defined in src/types/electron.d.ts
+// This file only defines process.env types for the main process
