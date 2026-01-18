@@ -284,6 +284,131 @@ User's question: ${userMessage}`;
   }
 }
 
+// Transcribe audio to text using Gemini
+export async function transcribeAudio(
+  audioBase64: string,
+  mimeType: string = "audio/m4a",
+  logger?: { info: (obj: unknown, msg: string) => void; error: (obj: unknown, msg: string) => void }
+): Promise<string> {
+  const modelName = DEFAULT_MODEL;
+  
+  if (logger) {
+    logger.info({ model: modelName, mimeType, audioSizeKB: Math.round(audioBase64.length * 0.75 / 1024) }, `🎤 Calling Gemini ${modelName} for audio transcription`);
+  }
+
+  const startTime = Date.now();
+
+  // Validate base64 data
+  if (!audioBase64 || audioBase64.length === 0) {
+    throw new Error("Audio base64 data is empty");
+  }
+
+  try {
+    // Use Gemini's audio understanding to transcribe
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: [
+        {
+          inlineData: {
+            mimeType,
+            data: audioBase64,
+          },
+        },
+        { text: "Transcribe this audio to text. Return only the transcribed text, without any additional commentary or formatting." },
+      ],
+    });
+
+    const transcription = response.text || "";
+    const duration = Date.now() - startTime;
+
+    if (logger) {
+      logger.info({ model: modelName, duration, transcriptionLength: transcription.length }, `🎤 Gemini ${modelName} transcription received`);
+    }
+
+    return transcription.trim();
+  } catch (error: unknown) {
+    const duration = Date.now() - startTime;
+    
+    if (error instanceof Error) {
+      const errorDetails: Record<string, unknown> = {
+        model: modelName,
+        duration,
+        message: error.message,
+      };
+      
+      if ('status' in error) {
+        errorDetails.status = (error as { status?: number }).status;
+      }
+      if ('statusText' in error) {
+        errorDetails.statusText = (error as { statusText?: string }).statusText;
+      }
+      
+      if (logger) {
+        logger.error(errorDetails, `🎤 Gemini ${modelName} transcription error`);
+      }
+      
+      // Try fallback models if model not found
+      if (error.message.includes('404') || error.message.includes('not found')) {
+        const fallbackModels = [
+          "gemini-2.0-flash",
+          "gemini-3-flash-preview",
+          "gemini-2.5-pro",
+          "gemini-1.5-flash",
+        ];
+        
+        if (logger) {
+          logger.info({ originalModel: modelName, fallbacks: fallbackModels }, `🎤 Trying fallback models for ${modelName}`);
+        }
+        
+        for (const fallbackModel of fallbackModels) {
+          if (fallbackModel === modelName) continue;
+          
+          try {
+            if (logger) {
+              logger.info({ fallbackModel }, `🎤 Trying fallback model: ${fallbackModel}`);
+            }
+            
+            const fallbackResponse = await ai.models.generateContent({
+              model: fallbackModel,
+              contents: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: audioBase64,
+                  },
+                },
+                { text: "Transcribe this audio to text. Return only the transcribed text, without any additional commentary or formatting." },
+              ],
+            });
+            
+            const fallbackTranscription = fallbackResponse.text || "";
+            const totalDuration = Date.now() - startTime;
+            
+            if (logger) {
+              logger.info({ model: fallbackModel, duration: totalDuration, transcriptionLength: fallbackTranscription.length }, `🎤 Gemini ${fallbackModel} transcription received (fallback)`);
+            }
+            
+            return fallbackTranscription.trim();
+          } catch (fallbackError: unknown) {
+            if (logger) {
+              logger.info({ fallbackModel, err: fallbackError }, `🎤 Fallback model ${fallbackModel} also failed`);
+            }
+            // Continue to next fallback
+          }
+        }
+        
+        throw new Error(`Gemini model "${modelName}" and all fallback models failed for transcription. Please check your API key has access to Gemini models. Error: ${error.message}`);
+      }
+    } else {
+      if (logger) {
+        logger.error({ model: modelName, duration, err: error }, `🎤 Gemini ${modelName} transcription error`);
+      }
+    }
+    
+    throw error;
+  }
+}
+
 // Optional: Helper function to switch models if needed later
 // Can be called from routes with model parameter if model selection is added back
 export async function analyzeWithGeminiPro(
