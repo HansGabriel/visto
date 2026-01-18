@@ -1,7 +1,7 @@
 // API Configuration
 // Use the network address provided, or fallback to localhost for development
 // Note: Server runs on port 3000, not 8081 (8081 is Expo dev server)
-export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://172.20.10.4:3000';
+export const API_URL = process.env.EXPO_PUBLIC_API_URL || ''
 
 // Polling interval for message updates (in milliseconds)
 export const POLLING_INTERVAL = 3000;
