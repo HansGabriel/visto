@@ -5,10 +5,11 @@ import { View, TextInput, Text, Pressable } from "react-native";
 interface PairingCodeInputProps {
   value: string;
   onChangeText: (text: string) => void;
+  editable?: boolean;
 }
 
 // Main component
-export function PairingCodeInput({ value, onChangeText }: PairingCodeInputProps) {
+export function PairingCodeInput({ value, onChangeText, editable = true }: PairingCodeInputProps) {
   const inputRef = useRef<TextInput>(null);
   const codeLength = 6;
   const characters = value.toUpperCase().split("").slice(0, codeLength);
@@ -53,6 +54,7 @@ export function PairingCodeInput({ value, onChangeText }: PairingCodeInputProps)
         autoComplete="off"
         autoCorrect={false}
         autoFocus={true}
+        editable={editable}
         style={{ position: 'absolute', opacity: 0, height: 1, width: 1 }}
         accessibilityLabel="Enter pairing code"
         accessibilityHint="Type your 6-character pairing code"

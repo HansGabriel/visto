@@ -53,10 +53,6 @@ function createWindow() {
   // Show window when ready
   win.once('ready-to-show', () => {
     win?.show()
-    // Open DevTools in development mode
-    if (process.env.NODE_ENV === 'development' || VITE_DEV_SERVER_URL) {
-      win?.webContents.openDevTools()
-    }
   })
 
   // Hide window when closed instead of quitting

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { Audio } from "expo-av";
 import { StarField } from "../components/StarField";
@@ -18,19 +18,24 @@ interface ChatScreenProps {
 }
 
 // Static content
-const TITLE = "Desktop Assistant";
+const TITLE = "Visto AI";
 const MODEL = "Gemini Flash";
 const WELCOME_MESSAGE = "How can I help? Connect and ask me anything about your computer!";
 
 // Main component
 export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps) {
   const { sessionId, clearSession } = useSession();
+  const insets = useSafeAreaInsets();
   const [inputText, setInputText] = useState("");
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const scrollViewRef = useRef<ScrollView>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
+
+  // Calculate keyboard offset: header (~56px) + assistant info (~52px) = ~108px
+  // Use minimal offset since SafeAreaView already handles safe area insets
+  const keyboardVerticalOffset = Platform.OS === "ios" ? 0 : 0;
 
   const { messages, isLoading, isSending, sendMessage, loadMessages } = useChat({
     sessionId,
@@ -369,7 +374,7 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
       <KeyboardAvoidingView 
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         className="flex-1"
-        keyboardVerticalOffset={90}
+        keyboardVerticalOffset={keyboardVerticalOffset}
       >
         <ScrollView 
           ref={scrollViewRef}
@@ -382,21 +387,52 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
               <Text className="text-white mt-2">Loading messages...</Text>
             </View>
           ) : messages.length === 0 ? (
-            <View className="flex-1 items-center justify-center py-8">
-              <Text className="text-white text-lg mb-2">{WELCOME_MESSAGE}</Text>
+            <View className="flex-1 items-center justify-center py-8 px-4">
+              <View className="flex-row items-end mb-4 w-full max-w-[85%]">
+                <View className="flex-1 mr-2">
+                  <View className="bg-space-purple border-2 border-accent-blue shadow-lg shadow-accent-blue rounded-2xl px-4 py-3">
+                    <Text className="text-white text-base leading-6">{WELCOME_MESSAGE}</Text>
+                  </View>
+                </View>
+                {/* Robot Avatar */}
+                <View className="w-8 h-8 bg-accent-pink border-2 border-accent-blue shadow-lg shadow-accent-pink rounded-full items-center justify-center mb-1">
+                  <Text className="text-white text-lg">🤖</Text>
+                </View>
+              </View>
             </View>
           ) : (
-            messages.map((message, index) => (
-              <MessageBubble
-                key={`${message.messageId}-${index}`}
-                message={message}
-              />
-            ))
+            <>
+              {messages.map((message, index) => (
+                <MessageBubble
+                  key={`${message.messageId}-${index}`}
+                  message={message}
+                />
+              ))}
+              
+              {/* Typing Indicator - Show when waiting for AI response */}
+              {(isSending || (messages.length > 0 && messages[messages.length - 1]?.role === 'user')) && (
+                <View className="flex-row items-end mb-4 px-4">
+                  <View className="flex-1 mr-2">
+                    <View className="bg-space-purple border-2 border-accent-blue shadow-lg shadow-accent-blue rounded-2xl px-4 py-3 max-w-[85%]">
+                      <View className="flex-row items-center gap-1.5 py-2">
+                        <View className="w-2 h-2 rounded-full bg-accent-blue" />
+                        <View className="w-2 h-2 rounded-full bg-accent-pink" />
+                        <View className="w-2 h-2 rounded-full bg-accent-blue" />
+                      </View>
+                    </View>
+                  </View>
+                  {/* Robot Avatar */}
+                  <View className="w-8 h-8 bg-accent-pink border-2 border-accent-blue shadow-lg shadow-accent-pink rounded-full items-center justify-center mb-1">
+                    <Text className="text-white text-lg">🤖</Text>
+                  </View>
+                </View>
+              )}
+            </>
           )}
         </ScrollView>
 
         {/* Input Section */}
-        <View className="px-4 pb-4">
+        <View className="px-4" style={{ paddingBottom: insets.bottom }}>
           <View className="flex-row items-center gap-3 mb-2">
             <View className="flex-1 bg-gray-800 border-2 border-accent-blue shadow-xl shadow-accent-blue rounded-full flex-row items-center px-4 py-3">
             <TextInput
@@ -414,7 +450,7 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
             <Pressable
               onPress={handleVoiceInput}
               disabled={!sessionId || isSending}
-              className={`w-8 h-8 ${isRecordingVoice ? 'bg-red-600' : 'bg-accent-blue'} border border-accent-pink rounded-full items-center justify-center ml-3 active:opacity-80 active:scale-95 ${
+              className={`w-8 h-8 ${isRecordingVoice ? 'bg-red-600' : 'bg-transparent'} items-center justify-center ml-3 active:opacity-80 active:scale-95 ${
                 !sessionId || isSending ? 'opacity-50' : ''
               }`}
               accessibilityRole="button"
@@ -424,7 +460,7 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
               {isRecordingVoice ? (
                 <View className="w-3 h-3 bg-white rounded" />
               ) : (
-                <Ionicons name="mic" size={18} color="white" />
+                <Ionicons name="mic" size={18} color="#9CA3AF" />
               )}
             </Pressable>
           </View>
@@ -458,7 +494,7 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
           )}
           
           {/* Connection Status */}
-          <View className="items-center mt-2">
+          <View className="items-center" style={{ marginTop: 2 }}>
             {sessionId && isConnected ? (
               <View className="flex-row items-center">
                 <View className="w-2 h-2 bg-green-500 rounded-full mr-2" />
