@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ConvexHttpClient } from "convex/browser";
 import { analyzeWithLLM } from "../services/llm";
-// Screenshot cache no longer needed - screenshots are stored in Convex and retrieved via messages
+import { setScreenshotCache, deleteScreenshotCache, updateScreenshotCacheStorageId } from "../services/screenshotCache";
 
 // Lazy initialization - create client when needed
 function getConvexClient(): ConvexHttpClient {
@@ -410,17 +410,32 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
             )[0];
           
           if (screenshotRequest) {
-            // Mark request as processed - screenshot will be in assistant message
+            // Store base64 URL in cache immediately for instant preview
+            // Convert Convex ID to string for cache key
             const requestIdString = String(screenshotRequest._id);
-            await convexClient.mutation("functions/pendingRequests:markAsProcessed" as any, {
-              requestId: screenshotRequest._id,
-            });
+            setScreenshotCache(requestIdString, base64Url);
             fastify.log.info({ 
               desktopId, 
               requestId: requestIdString,
-              requestCreatedAt: (screenshotRequest as any).createdAt,
-              timeSinceCreated: Date.now() - (screenshotRequest as any).createdAt
-            }, "📸 Screenshot request marked as processed - will be included in assistant message");
+              base64UrlLength: base64Url.length,
+              cacheKey: requestIdString
+            }, "📸 Screenshot base64 URL cached for instant preview");
+            
+            // Update cache with storageId when it becomes available (in background)
+            storagePromise.then((result) => {
+              if (result?.storageId) {
+                updateScreenshotCacheStorageId(requestIdString, result.storageId);
+                fastify.log.info({ desktopId, requestId: requestIdString, storageId: result.storageId }, "📸 Screenshot storageId added to cache");
+              }
+            }).catch(() => {
+              // Ignore - already logged
+            });
+            
+            // IMPORTANT: Mark as processed AFTER caching, so mobile can retrieve it
+            await convexClient.mutation("functions/pendingRequests:markAsProcessed" as any, {
+              requestId: screenshotRequest._id,
+            });
+            fastify.log.info({ desktopId, requestId: requestIdString }, "📸 Pending request marked as processed");
           } else {
             // If no unprocessed request found, log all requests for debugging
             const allScreenshotRequests = (pendingRequests || [])
@@ -488,39 +503,20 @@ export default async function desktopRoutes(fastify: FastifyInstance): Promise<v
                 );
 
                 if (!hasResponse) {
-                  // Wait for storage to complete so we have the storageId
-                  let screenshotStorageId: string | undefined;
-                  try {
-                    const storageResult = await storagePromise;
-                    if (storageResult?.storageId) {
-                      screenshotStorageId = storageResult.storageId;
-                      fastify.log.info({ desktopId, storageId: screenshotStorageId }, "📸 Screenshot stored in Convex, got storageId");
-                    } else {
-                      fastify.log.warn({ desktopId }, "📸 Screenshot storage completed but no storageId returned");
-                    }
-                  } catch (storageError) {
-                    fastify.log.error({ desktopId, err: storageError }, "❌ Failed to get storageId for screenshot");
-                    // Continue anyway - mobile can still see the assistant response
-                  }
-                  
                   // Create assistant message with screenshot reference
-                  // Store the storageId so mobile can fetch the screenshot from Convex
+                  // Note: We don't store the full base64 image (too large for Convex 1MB limit)
+                  // The screenshot is already available via the upload response if needed
                   await convexClient.mutation("functions/messages:create" as any, {
                     sessionId: session._id,
                     role: "assistant",
                     content: aiResponse,
                     mediaType: "screenshot",
-                    mediaStorageId: screenshotStorageId, // Store the Convex storage ID
-                    // Don't store base64 URL - it exceeds Convex 1MB limit
+                    // Don't store full base64 - it exceeds Convex 1MB limit
+                    // The screenshot is available from the upload response if needed
                     mediaUrl: undefined,
                     createdAt: Date.now(),
                   });
-                  fastify.log.info({ 
-                    desktopId, 
-                    sessionId: session._id, 
-                    responseLength: aiResponse.length,
-                    hasStorageId: !!screenshotStorageId
-                  }, "✅ Assistant message created in chat with screenshot");
+                  fastify.log.info({ desktopId, sessionId: session._id, responseLength: aiResponse.length }, "✅ Assistant message created in chat");
                 } else {
                   fastify.log.info({ desktopId }, "📸 Assistant response already exists for this message");
                 }
