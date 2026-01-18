@@ -28,8 +28,7 @@ function App() {
   const [viewState, setViewState] = useState<ViewState>('pairing')
   const [manuallyNavigated, setManuallyNavigated] = useState(false)
 
-  // Set up polling for pending requests (start immediately when desktop is registered)
-  // Don't wait for mobile connection - mobile might send requests immediately after pairing
+  // Set up polling for pending requests (only when mobile is connected)
   usePolling({
     desktopId,
     onScreenshotRequest: async () => {
@@ -39,7 +38,7 @@ function App() {
     onStopRecordingRequest: async () => {
       await stopRecording()
     },
-    enabled: !!desktopId, // Start polling as soon as we have desktopId, don't wait for mobile
+    enabled: !!desktopId && mobileConnected,
   })
 
   // Initialize chat

@@ -78,18 +78,119 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
     setInputText("");
 
     try {
-      // Simplified: Just send message with requestScreenshot flag
-      // Desktop will capture, upload, and server will create assistant message with screenshot
-      console.log('📤 Sending message with screenshot request...');
-      await sendMessage(
-        messageText,
-        true, // requestScreenshot - desktop will capture and upload
-        undefined, // screenshotUrl - will be in assistant response
-        undefined, // videoUrl
-        undefined, // mediaPreviewUrl
-        undefined // storageId - will be in assistant response
-      );
-      console.log('✅ Message sent, waiting for desktop to capture screenshot...');
+      // Request screenshot first, then send message with screenshot
+      let screenshotUrl: string | undefined;
+      let storageId: string | undefined;
+      
+      console.log('📸 Requesting screenshot before sending message...');
+      try {
+        const requestResponse = await fetch(API_ENDPOINTS.CHAT_REQUEST_SCREENSHOT(sessionId), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (requestResponse.ok) {
+          const { requestId } = await requestResponse.json();
+          console.log('📸 Screenshot request created, requestId:', requestId);
+          
+          // Poll for screenshot - wait longer to ensure it's captured
+          // Desktop polls every 2 seconds, so we need to wait longer
+          let attempts = 0;
+          const maxAttempts = 30; // Increased to 30 attempts (15 seconds total)
+          // Wait 1.5 seconds before first poll to give desktop time to poll and capture
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          
+          while (attempts < maxAttempts) {
+            if (attempts > 0) {
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            attempts++;
+            
+            try {
+              const resultResponse = await fetch(API_ENDPOINTS.CHAT_GET_SCREENSHOT_RESULT(sessionId, requestId), {
+                method: 'GET',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (resultResponse.ok) {
+                const result = await resultResponse.json();
+                if (result.screenshotUrl && result.screenshotUrl.length > 0) {
+                  // Validate screenshot URL format
+                  if (result.screenshotUrl.startsWith('data:image/') || result.screenshotUrl.startsWith('http')) {
+                    screenshotUrl = result.screenshotUrl;
+                    storageId = result.storageId;
+                    console.log('✅ Screenshot captured successfully, URL length:', result.screenshotUrl.length, 'has storageId:', !!storageId);
+                    break;
+                  } else {
+                    console.warn('⚠️ Invalid screenshot URL format:', result.screenshotUrl.substring(0, 50));
+                  }
+                } else {
+                  console.warn('⚠️ Screenshot URL is empty in response');
+                }
+              } else if (resultResponse.status === 404) {
+                // Still waiting for screenshot
+                if (attempts % 3 === 0) {
+                  console.log(`📸 Waiting for screenshot... (attempt ${attempts}/${maxAttempts})`);
+                }
+                continue;
+              } else {
+                console.warn('⚠️ Unexpected response status when fetching screenshot:', resultResponse.status);
+              }
+            } catch (error) {
+              console.warn('Error fetching screenshot result:', error);
+            }
+          }
+          
+          if (!screenshotUrl) {
+            console.warn('⚠️ Screenshot not captured within timeout (', maxAttempts, 'attempts), sending message without it');
+          } else {
+            console.log('✅ Screenshot ready, proceeding to send message');
+          }
+        } else {
+          const errorText = await requestResponse.text().catch(() => 'Unknown error');
+          console.warn('⚠️ Failed to create screenshot request:', requestResponse.status, errorText);
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.warn('⚠️ Failed to get screenshot, sending message without it:', errorMessage);
+      }
+      
+      // Send message with screenshot (if available)
+      // IMPORTANT: Always include screenshot if we have it, even if it's just the base64 URL
+      const finalScreenshotUrl = screenshotUrl && screenshotUrl.length > 0 ? screenshotUrl : undefined;
+      const finalStorageId = storageId && storageId.length > 0 ? storageId : undefined;
+      
+      console.log('📤 Sending message:', {
+        hasText: !!messageText && messageText.length > 0,
+        hasScreenshotUrl: !!finalScreenshotUrl,
+        hasStorageId: !!finalStorageId,
+        screenshotUrlLength: finalScreenshotUrl?.length || 0,
+      });
+      
+      if (finalScreenshotUrl) {
+        console.log('📸 Screenshot URL preview:', finalScreenshotUrl.substring(0, 50) + '...');
+      }
+      
+      // Ensure we always send the message, even if screenshot failed
+      // But if we have a screenshot, make sure it's included
+      try {
+        await sendMessage(
+          messageText,
+          false, // requestScreenshot - we already requested it above
+          finalScreenshotUrl, // screenshotUrl - include if we have it
+          undefined, // videoUrl
+          finalScreenshotUrl, // mediaPreviewUrl - same as screenshotUrl for preview
+          finalStorageId // storageId - include if we have it
+        );
+        console.log('✅ Message sent successfully');
+      } catch (sendError) {
+        console.error('❌ Failed to send message:', sendError);
+        throw sendError; // Re-throw to be caught by outer try-catch
+      }
     } catch (error) {
       console.error('Failed to send message:', error);
       setInputText(messageText); // Restore text on error
