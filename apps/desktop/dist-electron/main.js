@@ -40,9 +40,6 @@ function createWindow() {
   }
   win.once("ready-to-show", () => {
     win == null ? void 0 : win.show();
-    if (process.env.NODE_ENV === "development" || VITE_DEV_SERVER_URL) {
-      win == null ? void 0 : win.webContents.openDevTools();
-    }
   });
   win.on("close", (event) => {
     if (process.platform !== "darwin") {

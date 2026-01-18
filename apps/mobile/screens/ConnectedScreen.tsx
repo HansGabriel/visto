@@ -55,25 +55,28 @@ export function ConnectedScreen({ onBack, onContinue }: ConnectedScreenProps) {
           <View className="flex-row items-center justify-center mb-8">
             {/* Laptop */}
             <View className="items-center">
-              <View className="w-20 h-16 bg-space-purple border-2 border-accent-blue rounded-lg items-center justify-center">
-                <Text className="text-accent-blue text-3xl">💻</Text>
+              <View className="w-32 h-24 bg-space-purple border-4 border-accent-blue shadow-2xl shadow-accent-blue rounded-xl items-center justify-center">
+                <Text className="text-accent-blue text-5xl">💻</Text>
               </View>
             </View>
 
             {/* Connection Line with Shield */}
-            <View className="items-center mx-4">
-              <Text className="text-gray-500">• • • • •</Text>
-              <View className="absolute">
-                <View className="w-12 h-12 bg-accent-blue rounded-full items-center justify-center">
-                  <Text className="text-white text-2xl">✓</Text>
-                </View>
+            <View className="items-center justify-center mx-6 relative" style={{ width: 120 }}>
+              {/* Animated Connection Dots */}
+              <View className="flex-row items-center justify-center gap-2 mb-2">
+                <View className="w-2.5 h-2.5 rounded-full bg-accent-blue" />
+                <View className="w-2.5 h-2.5 rounded-full bg-accent-pink" />
+                <View className="w-2.5 h-2.5 rounded-full bg-accent-blue" />
+                <View className="w-2.5 h-2.5 rounded-full bg-accent-pink" />
+                <View className="w-2.5 h-2.5 rounded-full bg-accent-blue" />
               </View>
+              
             </View>
 
             {/* Phone */}
             <View className="items-center">
-              <View className="w-12 h-20 bg-space-purple border-2 border-accent-pink rounded-lg items-center justify-center">
-                <Text className="text-accent-pink text-2xl">📱</Text>
+              <View className="w-16 h-28 bg-space-purple border-4 border-accent-pink shadow-2xl shadow-accent-pink rounded-xl items-center justify-center">
+                <Text className="text-accent-pink text-4xl">📱</Text>
               </View>
             </View>
           </View>
