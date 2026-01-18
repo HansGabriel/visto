@@ -382,10 +382,9 @@ function App() {
       return
     }
 
-    if (mobileConnected && viewState === 'pairing') {
-      // Transition to connected screen when mobile connects
-      setViewState('connected')
-    } else if (!mobileConnected && pairingCode && viewState !== 'pairing') {
+    // Stay on pairing screen - removed auto-transition to connected
+    // User must manually navigate to chat via ConnectedScreen
+    if (!mobileConnected && pairingCode && viewState !== 'pairing') {
       // Only reset to pairing if we're not already there and not manually navigated
       setViewState('pairing')
     }
