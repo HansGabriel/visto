@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ConvexHttpClient } from "convex/browser";
-import { analyzeWithLLM, chatWithLLM } from "../services/llm";
+import { analyzeWithLLM, chatWithLLM, transcribeAudio } from "../services/llm";
 import { getScreenshotCache, deleteScreenshotCache } from "../services/screenshotCache";
 
 // Lazy initialization - create client when needed
@@ -475,7 +475,7 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
     }
   );
 
-  // Transcribe audio to text
+  // Transcribe audio to text using Gemini
   fastify.post(
     "/api/chat/:sessionId/transcribe",
     async (
@@ -491,20 +491,31 @@ export default async function chatRoutes(fastify: FastifyInstance): Promise<void
           return reply.code(400).send({ error: "No audio file provided" });
         }
 
-        // For now, return a placeholder transcription
-        // In production, you would:
-        // 1. Read the audio file buffer: const buffer = await data.toBuffer();
-        // 2. Convert audio to the format required by your STT service (e.g., Google Speech-to-Text, Whisper API)
-        // 3. Send to the STT service
-        // 4. Return the transcription
+        const sessionId = request.params.sessionId;
+        fastify.log.info({ sessionId, filename: data.filename, mimetype: data.mimetype }, "🎤 Audio transcription requested");
+
+        // Read the audio file buffer
+        const buffer = await data.toBuffer();
+        const audioBase64 = buffer.toString('base64');
         
-        // Placeholder: Return a message indicating transcription is being set up
-        // TODO: Implement actual speech-to-text using Google Speech-to-Text API, Whisper, or similar
-        fastify.log.info({ sessionId: request.params.sessionId, filename: data.filename }, "🎤 Audio transcription requested (placeholder)");
+        // Determine MIME type from file or default to audio/m4a
+        const mimeType = data.mimetype || 'audio/m4a';
         
-        return reply.code(501).send({ 
-          error: "Speech-to-text transcription is not yet implemented. Please type your message." 
-        });
+        fastify.log.info({ 
+          sessionId, 
+          audioSizeKB: Math.round(buffer.length / 1024),
+          mimeType 
+        }, "🎤 Audio file read, sending to Gemini for transcription");
+
+        // Use Gemini to transcribe the audio
+        const transcription = await transcribeAudio(audioBase64, mimeType, fastify.log);
+        
+        fastify.log.info({ 
+          sessionId, 
+          transcriptionLength: transcription.length 
+        }, "🎤 Transcription complete");
+
+        return { transcription };
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         fastify.log.error(

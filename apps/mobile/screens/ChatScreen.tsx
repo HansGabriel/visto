@@ -201,45 +201,48 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
     if (isRecordingVoice) {
       // Stop recording
       try {
-        if (recordingRef.current) {
-          // Check recording status first
-          const status = await recordingRef.current.getStatusAsync();
-          
-          if (status.isRecording) {
-            // Stop the recording
-            await recordingRef.current.stopAndUnloadAsync();
-            const uri = recordingRef.current.getURI();
-            
-            // Clean up
-            recordingRef.current = null;
-            setIsRecordingVoice(false);
-            
-            if (uri) {
-              // Transcribe audio to text
-              await transcribeAudio(uri);
-            }
-          } else {
-            // Already stopped, just clean up
-            recordingRef.current = null;
-            setIsRecordingVoice(false);
-          }
-        } else {
+        if (!recordingRef.current) {
           // No recording ref, just reset state
           setIsRecordingVoice(false);
+          return;
+        }
+
+        // Get the URI before stopping (important!)
+        const uri = recordingRef.current.getURI();
+        
+        // Stop and unload the recording in one call
+        try {
+          await recordingRef.current.stopAndUnloadAsync();
+        } catch (stopError) {
+          console.warn('Error stopping recording:', stopError);
+          // Continue anyway - try to get URI if available
+        }
+        
+        // Clean up ref
+        const recordingUri = uri;
+        recordingRef.current = null;
+        setIsRecordingVoice(false);
+        
+        // Transcribe audio to text if we have a URI
+        if (recordingUri) {
+          await transcribeAudio(recordingUri);
+        } else {
+          console.warn('No recording URI available for transcription');
+          Alert.alert('Error', 'No recording found. Please try again.');
         }
       } catch (error) {
         console.error('Failed to stop recording:', error);
         // Force cleanup on error
         if (recordingRef.current) {
           try {
-            await recordingRef.current.stopAndUnloadAsync();
+            await recordingRef.current.stopAndUnloadAsync().catch(() => {});
           } catch (e) {
             // Ignore cleanup errors
           }
           recordingRef.current = null;
         }
         setIsRecordingVoice(false);
-        Alert.alert('Error', 'Failed to stop recording');
+        Alert.alert('Error', 'Failed to stop recording. Please try again.');
       }
     } else {
       // Start recording
@@ -269,9 +272,7 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
 
   async function transcribeAudio(uri: string) {
     try {
-      // Read the audio file and send to server for transcription
-      const response = await fetch(uri);
-      const blob = await response.blob();
+      console.log('🎤 Starting transcription for URI:', uri);
       
       // Create FormData to send audio file
       const formData = new FormData();
@@ -283,24 +284,32 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
       
       // Send to server for transcription
       const apiUrl = API_ENDPOINTS.CHAT_SEND_MESSAGE(sessionId || '').replace('/message', '/transcribe');
+      console.log('🎤 Sending audio to:', apiUrl);
+      
       const transcriptionResponse = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
+        // Don't set Content-Type header - let fetch set it with boundary for multipart/form-data
       });
       
       if (transcriptionResponse.ok) {
         const { transcription } = await transcriptionResponse.json();
-        if (transcription) {
-          setInputText(transcription);
+        if (transcription && transcription.trim()) {
+          console.log('✅ Transcription received:', transcription);
+          setInputText(transcription.trim());
         } else {
+          console.warn('⚠️ Empty transcription received');
           Alert.alert('No transcription', 'Could not transcribe audio. Please try again or type your message.');
         }
       } else {
-        throw new Error('Transcription failed');
+        const errorData = await transcriptionResponse.json().catch(() => ({ error: 'Transcription failed' }));
+        console.error('❌ Transcription failed:', errorData);
+        throw new Error(errorData.error || 'Transcription failed');
       }
     } catch (error) {
       console.error('Failed to transcribe audio:', error);
-      Alert.alert('Error', 'Failed to transcribe audio. Please type your message instead.');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to transcribe audio';
+      Alert.alert('Error', `${errorMessage}. Please type your message instead.`);
     }
   }
 
@@ -404,7 +413,7 @@ export function ChatScreen({ onBack, isConnected, onReconnect }: ChatScreenProps
             
             <Pressable
               onPress={handleVoiceInput}
-              disabled={!sessionId || isSending || isRecordingVoice}
+              disabled={!sessionId || isSending}
               className={`w-8 h-8 ${isRecordingVoice ? 'bg-red-600' : 'bg-accent-blue'} border border-accent-pink rounded-full items-center justify-center ml-3 active:opacity-80 active:scale-95 ${
                 !sessionId || isSending ? 'opacity-50' : ''
               }`}
